@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+build/
+dist/
+*.egg
+
+# Swift / SwiftPM
+macapp/.build/
+macapp/dist/
+.swiftpm/
+
+# macOS
+.DS_Store
+
+# Editors / assistants
+.claude/
+.vscode/
+.idea/
+
+# Diagnostics written by the packaged app at runtime
+CodexInspectorDebug.log

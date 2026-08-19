@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  python:
+    name: Python lint + smoke test
+    # 这个工具靠 ps/lsof 的输出格式和 macOS 的强化运行时打交道,只在 macOS 上有意义。
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Lint (ruff)
+        run: uvx ruff check codex_inspector
+
+      - name: Smoke test — JSON 输出必须是合法 JSON
+        run: uv run python3 -m codex_inspector --json | uv run python3 -m json.tool > /dev/null
+
+      - name: Smoke test — 纯文本输出不崩
+        run: uv run python3 -m codex_inspector
+
+  swift:
+    name: Swift build (菜单栏 App)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: swift build
+        working-directory: macapp
+        run: swift build -c release

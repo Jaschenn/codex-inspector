@@ -1,0 +1,51 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: 打包 macOS 菜单栏 App(自包含,内置 Python 运行时)
+        run: macapp/build_app.sh
+
+      - name: 压缩 .app
+        run: ditto -c -k --sequesterRsrc --keepParent macapp/dist/CodexInspector.app CodexInspector-macos-arm64.zip
+
+      - name: 构建 Python 包(命令行版,PyPI 风格 wheel/sdist)
+        run: uv build
+
+      - name: 创建 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            CodexInspector-macos-arm64.zip
+            dist/*.whl
+            dist/*.tar.gz
+          body: |
+            ## 安装方式
+
+            **菜单栏 App(推荐,免装 Python)**
+
+            下载 `CodexInspector-macos-arm64.zip`,解压后把 `CodexInspector.app` 拖进
+            "应用程序" 文件夹。首次运行会被 Gatekeeper 拦截(没有做 Apple 开发者签名),
+            右键点击 App → 打开,确认一次即可。仅支持 Apple Silicon (arm64) Mac。
+
+            **命令行版**
+
+            ```bash
+            pip install codex_inspector-*.whl
+            codex-inspector --help
+            ```
