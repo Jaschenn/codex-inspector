@@ -17,14 +17,17 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v5
 
+      - name: 构建 Python 包(命令行版,PyPI 风格 wheel/sdist)
+        run: uv build
+
       - name: 打包 macOS 菜单栏 App(自包含,内置 Python 运行时)
+        # 特意放在 `uv build` 之后:这一步会在仓库里生成 macapp/dist(几十 MB 的 .app)
+        # 和 macapp/.build(几百 MB 的编译缓存),不想让它们有任何机会被后面的打包步骤
+        # 扫进去。
         run: macapp/build_app.sh
 
       - name: 压缩 .app
         run: ditto -c -k --sequesterRsrc --keepParent macapp/dist/CodexInspector.app CodexInspector-macos-arm64.zip
-
-      - name: 构建 Python 包(命令行版,PyPI 风格 wheel/sdist)
-        run: uv build
 
       - name: 创建 GitHub Release
         uses: softprops/action-gh-release@v2

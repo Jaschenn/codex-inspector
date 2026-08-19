@@ -22,3 +22,6 @@ macapp/dist/
 
 # Diagnostics written by the packaged app at runtime
 CodexInspectorDebug.log
+
+# Release workflow 打出来的压缩包
+/*.zip
