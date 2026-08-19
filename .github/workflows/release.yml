@@ -43,8 +43,9 @@ jobs:
             **菜单栏 App(推荐,免装 Python)**
 
             下载 `CodexInspector-macos-arm64.zip`,解压后把 `CodexInspector.app` 拖进
-            "应用程序" 文件夹。首次运行会被 Gatekeeper 拦截(没有做 Apple 开发者签名),
-            右键点击 App → 打开,确认一次即可。仅支持 Apple Silicon (arm64) Mac。
+            "应用程序" 文件夹。首次运行会被 Gatekeeper 拦截(没有做 Apple 开发者签名)。
+            先试右键点击 App → 打开;如果没反应(不弹确认框),去 系统设置 → 隐私与
+            安全性,拉到最底部点"仍要打开"。仅支持 Apple Silicon (arm64) Mac。
 
             **命令行版**
 
