@@ -28,7 +28,7 @@ struct MarkdownContentView: View {
 
   var body: some View {
     MarkdownBlocks(nodes: Array(Document(parsing: source).children), depth: 0)
-      .font(.system(size: 13))
+      .font(.system(size: 14))
       .textSelection(.enabled)
       .frame(maxWidth: .infinity, alignment: .leading)
       .environment(
@@ -197,7 +197,7 @@ private struct MarkdownTable: View {
       textAlignment = .leading
     }
     return Text(markdownInlineText(markdownInlineSource(cell)))
-      .font(.system(size: 12, weight: header ? .semibold : .regular))
+      .font(.system(size: 13, weight: header ? .semibold : .regular))
       .multilineTextAlignment(textAlignment)
       .fixedSize(horizontal: false, vertical: true)
       .frame(width: table.maxColumnCount <= 2 ? 240 : 170, alignment: alignment)

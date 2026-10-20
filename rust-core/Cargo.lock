@@ -213,6 +213,7 @@ dependencies = [
  "libc",
  "regex",
  "rusqlite",
+ "rustc-hash",
  "serde",
  "serde_json",
  "sha2",

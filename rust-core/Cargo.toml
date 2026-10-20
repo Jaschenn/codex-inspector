@@ -15,6 +15,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 clap = { version = "4", features = ["derive"] }
 libc = "0.2"
 regex = "1"
+rustc-hash = "2"
 rusqlite = "0.38"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -23,6 +24,10 @@ shlex = "1"
 tiktoken-rs = "0.12.1"
 toml = "0.9"
 walkdir = "2"
+zstd = { version = "0.13", default-features = false }
+
+[build-dependencies]
+tiktoken-rs = "0.12.1"
 zstd = { version = "0.13", default-features = false }
 
 [profile.release]

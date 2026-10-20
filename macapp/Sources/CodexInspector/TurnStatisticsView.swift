@@ -99,7 +99,7 @@ struct TurnStatisticsView: View {
   }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 18) {
+    VStack(alignment: .leading, spacing: 16) {
       tokenCard
       timelineCard
     }
@@ -122,6 +122,7 @@ struct TurnStatisticsView: View {
           tokenMetric("输入", key: "input_tokens")
           tokenMetric("输出", key: "output_tokens")
         }
+        Divider()
         LazyVGrid(
           columns: Array(repeating: GridItem(.flexible(), alignment: .leading), count: 3),
           spacing: 12
@@ -132,16 +133,24 @@ struct TurnStatisticsView: View {
           tokenDetail(
             "推理输出", key: "reasoning_output_tokens", denominator: "output_tokens", basis: "输出")
         }
-        Text("缓存用量属于输入，推理用量属于输出，不再额外加到总量中。")
-          .font(.caption).foregroundColor(.secondary)
-        Text(tokenSourceDescription).font(.caption).foregroundColor(.secondary)
         if timing.str("source") == "partial" {
-          Text("轮次尚未结束，仅显示已报告用量；进行中的调用可能还未回报。")
-            .font(.caption).foregroundColor(.secondary)
+          Text("轮次尚未结束，仅显示已报告用量。")
+            .font(.system(size: 12)).foregroundColor(.secondary)
         }
-        if let count = tokens.int("response_count"), count > 0 {
-          Text("已记录 \(count) 次模型响应").font(.caption).foregroundColor(.secondary)
+        DisclosureGroup("用量口径与来源") {
+          VStack(alignment: .leading, spacing: 8) {
+            Text("缓存用量属于输入，推理用量属于输出，不再额外加到总量中。")
+            Text(tokenSourceDescription)
+            if timing.str("source") == "partial" {
+              Text("进行中的模型调用可能尚未回报用量。")
+            }
+            if let count = tokens.int("response_count"), count > 0 {
+              Text("已记录 \(count) 次模型响应")
+            }
+          }
+          .font(.system(size: 12)).foregroundColor(.secondary).padding(.top, 8)
         }
+        .font(.system(size: 12))
       }
     }
   }
@@ -159,7 +168,7 @@ struct TurnStatisticsView: View {
     VStack(alignment: .leading, spacing: 6) {
       Text(usage.int(key)?.formatted() ?? "—").font(
         .system(size: 25, weight: .semibold, design: .rounded))
-      Text(title).font(.caption).foregroundColor(.secondary)
+      Text(title).font(.system(size: 12)).foregroundColor(.secondary)
     }
     .frame(maxWidth: .infinity, alignment: .leading)
   }
@@ -170,7 +179,7 @@ struct TurnStatisticsView: View {
     let count = usage.int(key)
     let percentage = tokenPercentage(count, of: usage.int(denominator))
     return VStack(alignment: .leading, spacing: 5) {
-      Text(title).font(.caption).foregroundColor(.secondary)
+      Text(title).font(.system(size: 12)).foregroundColor(.secondary)
       Text(count?.formatted() ?? "未提供").font(.system(size: 14, weight: .medium)).monospacedDigit()
       Text("占\(basis) \(percentage ?? "—")").font(.caption).foregroundColor(.secondary)
     }
@@ -217,13 +226,6 @@ struct TurnStatisticsView: View {
           }
         }
         .font(.caption).frame(height: 20, alignment: .leading)
-        if let segment = hoveredSegment, segment.category == .overlap {
-          Text("重叠记录：\(segment.components.map(\.title).joined(separator: "、"))")
-            .font(.caption).foregroundColor(.secondary)
-        }
-        if hoveredSegment?.category == .unknown {
-          Text(TimelineCategory.unknown.explanation).font(.caption).foregroundColor(.secondary)
-        }
         LazyVGrid(
           columns: [GridItem(.adaptive(minimum: 210), alignment: .leading)], alignment: .leading,
           spacing: 14
@@ -289,6 +291,11 @@ struct TurnStatisticsView: View {
     .frame(height: 26)
     .clipShape(RoundedRectangle(cornerRadius: 6))
     .accessibilityLabel("本轮耗时分布，分类总和等于记录总时长")
-    .help(hoveredSegment?.category.explanation ?? "悬停查看各时间段的含义。")
+    .help(
+      hoveredSegment.map { segment in
+        segment.category.explanation
+          + (segment.category == .overlap
+            ? " 重叠记录：" + segment.components.map(\.title).joined(separator: "、") : "")
+      } ?? "悬停查看各时间段的含义。")
   }
 }

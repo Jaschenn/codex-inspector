@@ -28,7 +28,7 @@ struct CodeEditorView: NSViewRepresentable {
   func makeCoordinator() -> Coordinator { Coordinator(self) }
 
   func makeNSView(context: Context) -> NSScrollView {
-    let scroll = NSScrollView()
+    let scroll = EditorScrollView()
     scroll.hasVerticalScroller = true
     scroll.hasHorizontalScroller = !wrapsLines
     scroll.autohidesScrollers = true
@@ -52,7 +52,9 @@ struct CodeEditorView: NSViewRepresentable {
     textView.maxSize = NSSize(
       width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
     textView.isVerticallyResizable = true
-    textView.autoresizingMask = [.width]
+    // The scroll view owns width negotiation, including the ruler; automatic document
+    // resizing can re-expand it after AppKit lays out the clip view.
+    textView.autoresizingMask = []
     scroll.documentView = textView
     scroll.verticalRulerView = LineNumberRuler(textView: textView, scrollView: scroll)
     scroll.hasVerticalRuler = true
@@ -82,10 +84,12 @@ struct CodeEditorView: NSViewRepresentable {
     scroll.hasHorizontalScroller = !wrapsLines
     textView.textContainer?.widthTracksTextView = wrapsLines
     textView.textContainer?.containerSize = NSSize(
-      width: wrapsLines ? max(100, scroll.contentSize.width - 24) : CGFloat.greatestFiniteMagnitude,
+      width: wrapsLines
+        ? max(100, scroll.contentView.bounds.width - 24) : CGFloat.greatestFiniteMagnitude,
       height: CGFloat.greatestFiniteMagnitude)
-    if wrapsLines {
-      textView.setFrameSize(NSSize(width: scroll.contentSize.width, height: textView.frame.height))
+    if let editorScroll = scroll as? EditorScrollView {
+      editorScroll.wrapsLines = wrapsLines
+      editorScroll.synchronizeTextWidth()
     }
     if needsHighlight { coordinator.highlight() }
     coordinator.language = language
@@ -132,6 +136,36 @@ struct CodeEditorView: NSViewRepresentable {
       textView.typingAttributes = [.font: font, .foregroundColor: NSColor.labelColor]
       isUpdating = false
     }
+  }
+}
+
+private final class EditorScrollView: NSScrollView {
+  var wrapsLines = true
+
+  override func tile() {
+    super.tile()
+    synchronizeTextWidth()
+  }
+
+  override func layout() {
+    super.layout()
+    synchronizeTextWidth()
+  }
+
+  func synchronizeTextWidth() {
+    guard wrapsLines, let textView = documentView as? NSTextView else { return }
+    // contentSize includes space occupied by the line-number ruler on some macOS versions.
+    // Use the actual clip view and follow native resizes, so wrapped text never hides behind
+    // the right edge while SwiftUI is still negotiating the sheet or card size.
+    let rulerWidth = rulersVisible ? (verticalRulerView?.ruleThickness ?? 0) : 0
+    let width = min(contentView.bounds.width, bounds.width - rulerWidth)
+    guard width > 0 else { return }
+    if textView.frame.width != width {
+      textView.setFrameSize(NSSize(width: width, height: textView.frame.height))
+    }
+    textView.textContainer?.containerSize = NSSize(
+      width: max(100, width - textView.textContainerInset.width * 2),
+      height: CGFloat.greatestFiniteMagnitude)
   }
 }
 

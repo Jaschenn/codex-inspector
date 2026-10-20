@@ -92,7 +92,7 @@ struct FileEditorView: View {
         Button {
           controller.showFind()
         } label: {
-          Label("查找 / 替换", systemImage: "magnifyingglass")
+          Label(isEditing ? "查找 / 替换" : "查找", systemImage: "magnifyingglass")
         }
         .keyboardShortcut("f", modifiers: .command)
         Button {
@@ -165,7 +165,7 @@ struct FileEditorView: View {
       }
       .font(.caption).foregroundColor(.secondary).padding(12)
     }
-    .frame(width: 1040, height: 740)
+    .frame(minWidth: 900, idealWidth: 960, minHeight: 560, idealHeight: 700)
     .onAppear {
       model.load(file.url)
       if model.isLoaded && model.isNewFile { isEditing = true }

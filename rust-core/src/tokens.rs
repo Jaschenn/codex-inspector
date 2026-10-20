@@ -30,6 +30,31 @@ fn cache() -> &'static Mutex<TokenCache> {
         )
     })
 }
+
+fn compressed_encoding() -> Option<tiktoken_rs::CoreBPE> {
+    let vocabulary = zstd::stream::decode_all(
+        include_bytes!(concat!(env!("OUT_DIR"), "/o200k_base.bin.zst")).as_slice(),
+    )
+    .ok()?;
+    let mut remaining = vocabulary.as_slice();
+    let mut encoder = rustc_hash::FxHashMap::default();
+    for rank in 0..199_998 {
+        let length = u16::from_le_bytes(remaining.get(..2)?.try_into().ok()?) as usize;
+        remaining = remaining.get(2..)?;
+        encoder.insert(remaining.get(..length)?.to_vec(), rank);
+        remaining = remaining.get(length..)?;
+    }
+    if !remaining.is_empty() || encoder.len() != 199_998 {
+        return None;
+    }
+    let mut special_tokens = rustc_hash::FxHashMap::default();
+    special_tokens.insert("<|endoftext|>".to_owned(), 199_999);
+    special_tokens.insert("<|endofprompt|>".to_owned(), 200_018);
+    // Use the upstream BPE implementation and pattern unchanged. Compression only changes
+    // storage; the original table is reconstructed once, on the first uncached Skill.
+    tiktoken_rs::CoreBPE::new(encoder, special_tokens, tiktoken_rs::O200K_BASE_PAT_STR).ok()
+}
+
 pub fn estimate(text: &str) -> (Option<usize>, Option<&'static str>, &'static str) {
     let key = util::hash(text);
     if let Some(count) = cache()
@@ -39,9 +64,8 @@ pub fn estimate(text: &str) -> (Option<usize>, Option<&'static str>, &'static st
     {
         return (Some(count), Some("o200k_base"), "tiktoken");
     }
-    // The official o200k_base ranks are embedded by tiktoken-rs. No runtime downloads or Python.
     static ENCODING: OnceLock<Option<tiktoken_rs::CoreBPE>> = OnceLock::new();
-    if let Some(encoding) = ENCODING.get_or_init(|| tiktoken_rs::o200k_base().ok()) {
+    if let Some(encoding) = ENCODING.get_or_init(compressed_encoding) {
         let count = encoding.encode_ordinary(text).len();
         if let Ok(mut cache) = cache().lock() {
             if cache.counts.len() >= 2048 {

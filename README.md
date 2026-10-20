@@ -4,7 +4,8 @@
 [![Release](https://github.com/Jaschenn/codex-inspector/actions/workflows/release.yml/badge.svg)](https://github.com/Jaschenn/codex-inspector/actions/workflows/release.yml)
 
 macOS 原生检查工具：按进程、聊天和轮次查看 Codex 的配置、AGENTS.md、Skills、MCP、Token 用量与耗时分布。
-支持左右布局的窗口、菜单栏快捷入口、语法高亮文件编辑和 Markdown 消息预览。
+左侧选择聊天或进程，右侧顶部切换检查类型；支持菜单栏快捷入口、语法高亮文件编辑和 Markdown 消息预览。
+当前 arm64 应用约 4.5 MiB，ZIP 约 2.4 MiB，保留完全离线的 Skill 分词估算。
 
 应用由 **SwiftUI 界面 + Rust 检查引擎**组成，分发包不包含 Python、虚拟环境或浏览器运行时。
 原 Python 实现暂留在仓库作为迁移参考，不参与应用构建，也不再生成 Python release 包。
@@ -40,7 +41,7 @@ rust-core/target/release/codex-inspector-core --validate-toml < config.toml
 - `rust-core/src/config.rs`：TOML 递归合并、信任状态、AGENTS/Skills/MCP 扫描和敏感信息遮蔽。
 - `rust-core/src/sessions.rs`：只读 SQLite 聊天目录与增量 JSONL 轮次索引。
 - `rust-core/src/statistics.rs`：响应去重、Token 累计差值与互斥耗时区间。
-- `rust-core/src/tokens.rs`：内嵌 `o200k_base` 分词表，完全离线的 Skill Token 估算。
+- `rust-core/src/tokens.rs`：无损压缩内嵌 `o200k_base` 分词表，完全离线的 Skill Token 估算。
 - `macapp/`：原生 SwiftUI 窗口、编辑器、Markdown 和打包脚本。
 
 默认每 3 秒生成 JSON 快照。多个目录存在状态数据库时，按数据库内最新聊天更新时间选择（包含 WAL 中的更新），避免同版本的旧数据库覆盖当前记录。日志索引缓存保存到 `~/Library/Caches/CodexInspector/rust-*.json`，

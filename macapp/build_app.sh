@@ -33,13 +33,17 @@ if [[ "$CARGO_OUTPUT" != /* ]]; then CARGO_OUTPUT="$PROJECT_ROOT/$CARGO_OUTPUT";
 RUST_BINARY="$CARGO_OUTPUT/$RUST_TARGET/release/codex-inspector-core"
 
 echo "==> Build native SwiftUI interface ($ARCH)"
-swift build -c release --arch "$ARCH" --package-path "$ROOT_DIR" --only-use-versions-from-resolved-file
+swift build -c release --arch "$ARCH" --package-path "$ROOT_DIR" --only-use-versions-from-resolved-file \
+  -Xswiftc -Osize -Xlinker -dead_strip
 SWIFT_OUTPUT="$(swift build -c release --arch "$ARCH" --package-path "$ROOT_DIR" --show-bin-path)"
 
 echo "==> Assemble app"
 mkdir -p "$STAGING/Contents/MacOS" "$STAGING/Contents/Resources/licenses"
 cp "$SWIFT_OUTPUT/$APP_NAME" "$STAGING/Contents/MacOS/$APP_NAME"
 cp "$RUST_BINARY" "$STAGING/Contents/MacOS/codex-inspector-core"
+# SwiftPM retains a large local symbol table even in release mode. Strip only staged
+# executables before signing; keep development outputs and their diagnostics intact.
+xcrun strip -S -x "$STAGING/Contents/MacOS/$APP_NAME"
 cp "$ROOT_DIR/Info.plist" "$STAGING/Contents/Info.plist"
 if [ -n "${CODEX_INSPECTOR_VERSION:-}" ]; then
   /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $CODEX_INSPECTOR_VERSION" "$STAGING/Contents/Info.plist"

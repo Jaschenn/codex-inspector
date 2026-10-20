@@ -7,27 +7,16 @@ enum InspectionSection: String, CaseIterable, Identifiable {
 
   var title: String {
     switch self {
-    case .overview: return "进程概览"
+    case .overview: return "概览"
     case .configurations: return "配置层"
     case .agents: return "AGENTS.md"
     case .skills: return "Skills"
-    case .mcp: return "MCP 服务器"
+    case .mcp: return "MCP"
     case .mergedConfig: return "合并配置"
-    case .warnings: return "诊断提示"
+    case .warnings: return "诊断"
     }
   }
 
-  var icon: String {
-    switch self {
-    case .overview: return "square.grid.2x2"
-    case .configurations: return "square.3.layers.3d"
-    case .agents: return "doc.text"
-    case .skills: return "sparkles"
-    case .mcp: return "point.3.connected.trianglepath.dotted"
-    case .mergedConfig: return "curlybraces"
-    case .warnings: return "exclamationmark.bubble"
-    }
-  }
 }
 
 /// 按 PID 保持选择，刷新后只有原进程退出才切换，避免列表重排打断阅读。
@@ -49,7 +38,7 @@ func reconciledSessionSelection(_ selectedID: String?, sessionIDs: [String]) -> 
 struct InspectorWindowView: View {
   @ObservedObject var fetcher: ReportFetcher
   @State private var selectedPID: Int?
-  @State private var selectedSection: InspectionSection? = .overview
+  @State private var selectedSection: InspectionSection = .overview
   @State private var searchText = ""
   @State private var selectedFile: InspectedFile?
   @State private var scope: InspectionScope = .session
@@ -64,7 +53,7 @@ struct InspectorWindowView: View {
   private var selectedProcess: [String: Any]? {
     processes.first { $0.int("pid") == selectedPID }
   }
-  private var section: InspectionSection { selectedSection ?? .overview }
+  private var section: InspectionSection { selectedSection }
   private var sessions: [[String: Any]] { fetcher.report.dictArray("sessions") }
   private var sessionIDs: [String] { sessions.compactMap { $0.str("id") } }
   private var filteredSessionIDs: [String] {
@@ -73,6 +62,14 @@ struct InspectorWindowView: View {
         || [session.str("title"), session.str("cwd")].compactMap { $0 }
           .contains { $0.localizedCaseInsensitiveContains(objectSearchText) }
     }.compactMap { $0.str("id") }
+  }
+  private var filteredProcesses: [[String: Any]] {
+    processes.filter { process in
+      objectSearchText.isEmpty
+        || String(process.int("pid") ?? 0).contains(objectSearchText)
+        || [process.str("cwd"), process.str("cmdline")].compactMap { $0 }
+          .contains { $0.localizedCaseInsensitiveContains(objectSearchText) }
+    }
   }
   private var selectedSession: [String: Any]? {
     sessions.first { $0.str("id") == selectedSessionID }
@@ -95,7 +92,7 @@ struct InspectorWindowView: View {
   var body: some View {
     NavigationSplitView {
       sidebar
-        .navigationSplitViewColumnWidth(min: 220, ideal: 250, max: 320)
+        .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 380)
     } detail: {
       VStack(spacing: 0) {
         if let error = fetcher.lastError {
@@ -114,7 +111,7 @@ struct InspectorWindowView: View {
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       .background(Color(nsColor: .windowBackgroundColor))
     }
-    .frame(minWidth: 900, minHeight: 620)
+    .frame(minWidth: 980, minHeight: 640)
     .toolbar {
       ToolbarItemGroup(placement: .primaryAction) {
         Button {
@@ -149,6 +146,7 @@ struct InspectorWindowView: View {
     .onChange(of: sessionIDs) { _ in reconcileSession() }
     .onChange(of: selectedSessionID) { _ in
       selectedTurnID = nil
+      searchText = ""
       updateSessionRequest()
     }
     .onChange(of: selectedTurnID) { _ in updateSessionRequest() }
@@ -156,6 +154,7 @@ struct InspectorWindowView: View {
     .onChange(of: includeOtherSources) { _ in updateSessionRequest() }
     .onChange(of: scope) { _ in
       objectSearchText = ""
+      searchText = ""
       updateSessionRequest()
     }
     .environment(\.openInspectedFile) { url in selectedFile = InspectedFile(url: url) }
@@ -166,153 +165,181 @@ struct InspectorWindowView: View {
 
   private var sidebar: some View {
     VStack(spacing: 0) {
-      Picker("检查对象", selection: $scope) {
-        Text("聊天").tag(InspectionScope.session)
-        Text("进程").tag(InspectionScope.process)
+      VStack(alignment: .leading, spacing: 12) {
+        Text("检测对象").font(.headline)
+        Picker("检测对象类型", selection: $scope) {
+          Text("聊天").tag(InspectionScope.session)
+          Text("进程").tag(InspectionScope.process)
+        }
+        .pickerStyle(.segmented).labelsHidden()
+        TextField(scope == .session ? "搜索聊天或项目" : "搜索 PID、目录或命令", text: $objectSearchText)
+          .textFieldStyle(.roundedBorder)
+          .accessibilityLabel(scope == .session ? "搜索聊天或项目" : "搜索进程")
+        HStack {
+          Text(scope == .session ? "聊天记录 · \(sessions.count)" : "正在运行 · \(processes.count)")
+            .font(.system(size: 12, weight: .medium)).foregroundColor(.secondary)
+          Spacer()
+          if scope == .session {
+            Menu {
+              Toggle("显示归档聊天", isOn: $includeArchived)
+              Toggle("显示其他来源记录", isOn: $includeOtherSources)
+              Divider()
+              Text("默认显示可识别的桌面与 CLI 聊天")
+            } label: {
+              Image(
+                systemName: includeArchived || includeOtherSources
+                  ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+            }
+            .menuStyle(.borderlessButton).frame(width: 22)
+            .accessibilityLabel("筛选聊天")
+            .help("归档与来源筛选；默认显示可识别的桌面与 CLI 聊天")
+          }
+        }
       }
-      .pickerStyle(.segmented).padding(12)
+      .padding(16)
+      Divider()
       if scope == .session {
         sessionBrowser
-        Divider()
+      } else {
+        processBrowser
       }
-      List(selection: $selectedSection) {
-        if scope == .process {
-          Section("正在运行 · \(processes.count)") {
-            ForEach(processIDs, id: \.self) { pid in
-              if let proc = processes.first(where: { $0.int("pid") == pid }) {
-                Button {
-                  selectedPID = pid
-                } label: {
-                  HStack(alignment: .top, spacing: 8) {
-                    Circle().fill(trustPresentation(for: proc).color)
-                      .frame(width: 7, height: 7).padding(.top, 5)
-                    VStack(alignment: .leading, spacing: 4) {
-                      Text("PID \(pid)").font(.system(size: 13, weight: .semibold))
-                      Text(shortenPath(proc.str("cwd")))
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                        .lineLimit(2)
-                        .truncationMode(.middle)
-                    }
-                    Spacer(minLength: 0)
-                    if selectedPID == pid {
-                      Image(systemName: "checkmark").foregroundColor(.accentColor)
-                    }
-                  }
-                  .padding(.vertical, 5)
-                  .frame(maxWidth: .infinity, alignment: .leading)
-                  .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("选择进程 PID \(pid)")
-              }
-            }
-            if processes.isEmpty {
-              Text("未发现 Codex 进程").foregroundColor(.secondary)
-            }
-          }
-        }
-        Section("检查内容") {
-          ForEach(InspectionSection.allCases) { item in
-            HStack {
-              Label(
-                item == .overview && scope == .session ? "轮次概览" : item.title, systemImage: item.icon
-              )
-              Spacer()
-              if let count = sectionCount(item), count > 0 {
-                Text("\(count)").font(.caption).foregroundColor(.secondary)
-              }
-            }
-            .tag(item)
-          }
-        }
-      }
-      .listStyle(.sidebar)
       Divider()
-      VStack(alignment: .leading, spacing: 5) {
-        Label("自动检查 · 3 秒", systemImage: "arrow.triangle.2.circlepath")
-        if let updated = fetcher.lastUpdated {
-          Text("更新于 \(updated.formatted(date: .omitted, time: .standard))")
+      HStack(spacing: 8) {
+        Circle().fill(fetcher.lastError == nil ? Color.green : Color.orange)
+          .frame(width: 6, height: 6)
+        VStack(alignment: .leading, spacing: 4) {
+          Text(fetcher.lastError == nil ? "每 3 秒自动检查" : "刷新失败，正在重试")
+          if let updated = fetcher.lastUpdated {
+            Text("更新于 \(updated.formatted(date: .omitted, time: .standard))")
+              .monospacedDigit()
+          }
         }
+        Spacer(minLength: 0)
       }
-      .font(.system(size: 11))
-      .foregroundColor(.secondary)
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .padding(16)
+      .font(.system(size: 11)).foregroundColor(.secondary).padding(16)
     }
   }
 
   private var sessionBrowser: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      HStack {
-        Text("聊天记录 · \(sessions.count)").font(.caption.weight(.semibold)).foregroundColor(
-          .secondary)
-        Spacer()
-        Menu {
-          Toggle("显示归档聊天", isOn: $includeArchived)
-          Toggle("显示其他来源记录", isOn: $includeOtherSources)
-        } label: {
-          Image(systemName: "line.3.horizontal.decrease.circle")
-        }
-        .menuStyle(.borderlessButton).frame(width: 20)
-      }
-      TextField("搜索聊天或项目", text: $objectSearchText)
-        .textFieldStyle(.roundedBorder).accessibilityLabel("搜索聊天或项目")
-      if !includeOtherSources {
-        Text("桌面 / CLI · 其他来源可在筛选中显示").font(.system(size: 10)).foregroundColor(.secondary)
-      }
-      ScrollView {
-        LazyVStack(spacing: 4) {
-          ForEach(filteredSessionIDs, id: \.self) { id in
-            if let session = sessions.first(where: { $0.str("id") == id }) {
-              Button {
-                selectedSessionID = id
-                searchText = ""
-              } label: {
-                HStack(alignment: .top, spacing: 8) {
-                  Image(systemName: session.bool("archived") == true ? "archivebox" : "bubble.left")
-                    .foregroundColor(selectedSessionID == id ? .accentColor : .secondary)
-                  VStack(alignment: .leading, spacing: 5) {
-                    Text(session.str("title") ?? "未命名聊天").font(.system(size: 12, weight: .medium))
-                      .lineLimit(2)
-                    Text(shortenPath(session.str("cwd"))).font(.system(size: 10)).foregroundColor(
-                      .secondary
-                    )
-                    .lineLimit(1).truncationMode(.middle)
-                  }
-                  Spacer(minLength: 0)
-                }
-                .padding(9).frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                  selectedSessionID == id ? Color.accentColor.opacity(0.14) : .clear,
-                  in: RoundedRectangle(cornerRadius: 7)
-                )
-                .contentShape(Rectangle())
+    List(selection: $selectedSessionID) {
+      ForEach(filteredSessionIDs, id: \.self) { id in
+        if let session = sessions.first(where: { $0.str("id") == id }) {
+          VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 6) {
+              Text(session.str("title") ?? "未命名聊天")
+                .font(.system(size: 13, weight: .medium)).lineLimit(2)
+              if session.bool("archived") == true {
+                Image(systemName: "archivebox").font(.system(size: 11)).foregroundColor(.secondary)
+                  .help("已归档")
               }
-              .buttonStyle(.plain)
-              .accessibilityLabel("选择聊天：\(session.str("title") ?? "未命名聊天")")
             }
+            Text(shortenPath(session.str("cwd")))
+              .font(.system(size: 12)).foregroundColor(.secondary)
+              .lineLimit(1).truncationMode(.middle)
           }
-          if sessions.isEmpty {
-            Text("暂无可读取的聊天记录").font(.caption).foregroundColor(.secondary).padding(12)
-          } else if filteredSessionIDs.isEmpty {
-            Text("没有匹配的聊天，试试其他标题或项目名称。").font(.caption).foregroundColor(.secondary).padding(12)
+          .padding(.vertical, 6)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .contentShape(Rectangle())
+          .tag(id)
+          .help(session.str("cwd") ?? "未记录工作目录")
+          .accessibilityElement(children: .ignore)
+          .accessibilityLabel("选择聊天：\(session.str("title") ?? "未命名聊天")")
+        }
+      }
+    }
+    .listStyle(.sidebar)
+    .overlay {
+      if filteredSessionIDs.isEmpty {
+        objectListEmpty(
+          sessions.isEmpty ? "暂无聊天记录" : "没有匹配的聊天",
+          detail: sessions.isEmpty ? "等待读取本地 Codex 日志。" : "试试其他标题或项目名称。")
+      }
+    }
+  }
+
+  private var processBrowser: some View {
+    List(selection: $selectedPID) {
+      ForEach(filteredProcesses.compactMap { $0.int("pid") }, id: \.self) { pid in
+        if let process = processes.first(where: { $0.int("pid") == pid }) {
+          let trust = trustPresentation(for: process)
+          VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+              Circle().fill(trust.color).frame(width: 6, height: 6).help(trust.explanation)
+              Text("PID \(String(pid))").font(.system(size: 13, weight: .medium)).monospacedDigit()
+              Spacer()
+            }
+            Text(shortenPath(process.str("cwd")))
+              .font(.system(size: 12)).foregroundColor(.secondary)
+              .lineLimit(2).truncationMode(.middle)
+          }
+          .padding(.vertical, 6)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .contentShape(Rectangle())
+          .tag(pid)
+          .help(process.str("cmdline") ?? "Codex 进程")
+          .accessibilityElement(children: .ignore)
+          .accessibilityLabel("选择进程 PID \(String(pid))")
+        }
+      }
+    }
+    .listStyle(.sidebar)
+    .overlay {
+      if filteredProcesses.isEmpty {
+        objectListEmpty(
+          processes.isEmpty ? "未发现 Codex 进程" : "没有匹配的进程",
+          detail: processes.isEmpty ? "启动 Codex 后会自动显示。" : "试试其他 PID 或目录。")
+      }
+    }
+  }
+
+  private func objectListEmpty(_ title: String, detail: String) -> some View {
+    VStack(spacing: 8) {
+      Text(title).font(.system(size: 13, weight: .medium))
+      Text(detail).font(.system(size: 12)).foregroundColor(.secondary)
+    }
+    .multilineTextAlignment(.center).padding(20)
+  }
+
+  private var contentSelector: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      Picker("检查内容", selection: $selectedSection) {
+        ForEach(InspectionSection.allCases) { item in
+          Text(item.title).tag(item)
+        }
+      }
+      .pickerStyle(.segmented).controlSize(.large).labelsHidden()
+      .accessibilityLabel("检查内容")
+      if [.skills, .mcp, .agents].contains(section) {
+        HStack {
+          TextField("搜索名称、描述或路径", text: $searchText)
+            .textFieldStyle(.roundedBorder).frame(maxWidth: 380)
+            .accessibilityLabel("搜索检查内容")
+          Spacer()
+          if let count = sectionCount(section) {
+            Text(
+              searchText.isEmpty
+                ? "\(count) \(section == .agents ? "个文件" : "项")"
+                : "\(matchingSectionCount) / \(count) \(section == .agents ? "个文件" : "项")"
+            )
+            .font(.system(size: 12)).foregroundColor(.secondary)
           }
         }
       }
-      .frame(maxHeight: 240)
     }
-    .padding(.horizontal, 12).padding(.bottom, 12)
   }
 
   @ViewBuilder private var sessionContent: some View {
     if let session = selectedSession {
       VStack(alignment: .leading, spacing: 0) {
-        VStack(alignment: .leading, spacing: 12) {
-          Text(section == .overview ? "轮次概览" : section.title).font(.system(size: 27, weight: .bold))
-          Text(session.str("title") ?? "未命名聊天").font(.system(size: 14, weight: .medium)).lineLimit(
-            2)
-          HStack {
+        VStack(alignment: .leading, spacing: 16) {
+          VStack(alignment: .leading, spacing: 6) {
+            Text(session.str("title") ?? "未命名聊天")
+              .font(.system(size: 20, weight: .semibold)).lineLimit(2).textSelection(.enabled)
+            Text(shortenPath(sessionDetail?.str("cwd") ?? session.str("cwd")))
+              .font(.system(size: 13)).foregroundColor(.secondary)
+              .lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+          }
+          HStack(spacing: 12) {
             Picker("轮次", selection: $selectedTurnID) {
               Text("最新轮次 · 自动跟随").tag(nil as String?)
               ForEach(
@@ -325,13 +352,12 @@ struct InspectorWindowView: View {
                 .tag(turn.str("id"))
               }
             }
-            .frame(maxWidth: 480).disabled(fetcher.isSessionLoading)
-            Spacer()
-            Text("当前磁盘文件").font(.caption).foregroundColor(.secondary)
-              .help("按所选轮次的目录扫描当前文件，不是历史文件快照。")
+            .frame(maxWidth: 520).disabled(fetcher.isSessionLoading)
+            Spacer(minLength: 0)
           }
+          contentSelector
         }
-        .padding(28)
+        .padding(24)
         Divider()
         if fetcher.isSessionLoading || (sessionDetail == nil && fetcher.isRefreshing) {
           VStack(spacing: 12) {
@@ -341,17 +367,18 @@ struct InspectorWindowView: View {
           .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let detail = sessionDetail {
           ScrollView {
-            LazyVStack(alignment: .leading, spacing: 18) {
+            LazyVStack(alignment: .leading, spacing: 16) {
               if let error = detail.str("error") { diagnosticBanner(error, color: .orange) }
               if detail.subDict("selected_turn").isEmpty {
                 hint("选择其他聊天，或等待本地日志记录新的轮次。")
               } else if section == .overview {
                 sessionOverview(detail)
               } else if section == .agents {
+                hint("按所选轮次目录扫描磁盘当前文件；不是历史文件快照。")
                 if let inspection = currentInspection { agentCards(inspection) }
                 recordedInstructionCards(detail)
               } else if let inspection = currentInspection {
-                hint("以所选轮次目录为依据扫描当前配置；不代表当时的生效配置或模型请求内容。")
+                hint("按所选轮次目录扫描磁盘当前配置；不代表当时的生效配置或模型请求内容。")
                 switch section {
                 case .configurations: configurationCards(inspection)
                 case .skills: skillCards(inspection)
@@ -362,8 +389,11 @@ struct InspectorWindowView: View {
                 }
               }
             }
-            .padding(28).frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: 1120, alignment: .leading)
+            .padding(24).frame(maxWidth: .infinity)
           }
+          .id(
+            "session-\(selectedSessionID ?? "")-\(selectedTurnID ?? "latest")-\(section.rawValue)")
         } else {
           VStack(spacing: 12) {
             Text("轮次信息暂不可用").font(.headline)
@@ -387,32 +417,52 @@ struct InspectorWindowView: View {
 
   private func sessionOverview(_ detail: [String: Any]) -> some View {
     let turn = detail.subDict("selected_turn")
-    return VStack(alignment: .leading, spacing: 18) {
+    return VStack(alignment: .leading, spacing: 16) {
       TurnStatisticsView(statistics: turn.subDict("statistics"))
-      InspectionCard(title: "第 \(turn.int("number") ?? 0) 轮", icon: "clock.arrow.circlepath") {
-        InspectionField(
-          label: "记录状态",
-          value: turn.str("status") == "completed"
-            ? "已完成" : (turn.str("status") == "interrupted" ? "已中断" : "未记录结束"), monospaced: false)
-        InspectionField(label: "模型", value: turn.str("model") ?? "记录未提供")
-        InspectionField(
-          label: "开始时间", value: recordedDate(turn.str("started_at")), monospaced: false)
-        InspectionField(
-          label: "结束时间", value: recordedDate(turn.str("completed_at")), monospaced: false)
-        InspectionField(label: "工具调用", value: "\(turn.int("tool_count") ?? 0)", monospaced: false)
-        InspectionField(
-          label: "轮次工作目录", value: shortenPath(detail.str("cwd")), path: detail.str("cwd"))
-        InspectionField(
-          label: "目录来源",
-          value: detail.str("directory_source") == "turn_context"
-            ? "本轮 turn_context" : "会话元数据（本轮未记录目录）", monospaced: false)
-        if let inspection = currentInspection {
-          InspectionField(
-            label: "Git 项目根",
-            value: inspection.str("project_root").map(shortenPath) ?? "未识别到 Git 项目",
-            path: inspection.str("project_root"))
+      InspectionCard(title: "轮次与目录", icon: "clock.arrow.circlepath") {
+        HStack(spacing: 12) {
+          Text("第 \(turn.int("number") ?? 0) 轮").font(.system(size: 13, weight: .medium))
+          Text(
+            turn.str("status") == "completed"
+              ? "已完成"
+              : (turn.str("status") == "interrupted" ? "已中断" : "未记录结束")
+          )
+          .foregroundColor(.secondary)
+          Spacer()
+          Text(turn.str("model") ?? "模型未记录").foregroundColor(.secondary)
         }
-        hint("配置和指令文件按此目录自动检查；显示的是磁盘当前版本。")
+        .font(.system(size: 13))
+        DisclosureGroup("查看时间、工具调用与目录来源") {
+          VStack(alignment: .leading, spacing: 14) {
+            InspectionField(
+              label: "记录状态",
+              value: turn.str("status") == "completed"
+                ? "已完成" : (turn.str("status") == "interrupted" ? "已中断" : "未记录结束"), monospaced: false
+            )
+            InspectionField(label: "模型", value: turn.str("model") ?? "记录未提供")
+            InspectionField(
+              label: "开始时间", value: recordedDate(turn.str("started_at")), monospaced: false)
+            InspectionField(
+              label: "结束时间", value: recordedDate(turn.str("completed_at")), monospaced: false)
+            InspectionField(
+              label: "工具调用", value: "\(turn.int("tool_count") ?? 0)", monospaced: false)
+            InspectionField(
+              label: "轮次工作目录", value: shortenPath(detail.str("cwd")), path: detail.str("cwd"))
+            InspectionField(
+              label: "目录来源",
+              value: detail.str("directory_source") == "turn_context"
+                ? "本轮 turn_context" : "会话元数据（本轮未记录目录）", monospaced: false)
+            if let inspection = currentInspection {
+              InspectionField(
+                label: "Git 项目根",
+                value: inspection.str("project_root").map(shortenPath) ?? "未识别到 Git 项目",
+                path: inspection.str("project_root"))
+            }
+            hint("配置和指令文件按此目录自动检查；显示的是磁盘当前版本。")
+          }
+          .padding(.top, 14)
+        }
+        .font(.system(size: 13))
       }
       InspectionCard(title: "用户消息预览", icon: "person.bubble") {
         MarkdownContentView(
@@ -434,7 +484,7 @@ struct InspectorWindowView: View {
   }
 
   private func recordedInstructionCards(_ detail: [String: Any]) -> some View {
-    VStack(alignment: .leading, spacing: 18) {
+    VStack(alignment: .leading, spacing: 16) {
       Text("会话记录中的指令文本").font(.headline)
       hint("这是日志中出现过的文本，可能由用户或宿主注入；不把它自动认定为某个磁盘文件，也不保证在后续模型请求中仍保留。")
       let instructions = detail.dictArray("recorded_instructions")
@@ -477,31 +527,26 @@ struct InspectorWindowView: View {
 
   private func processContent(_ proc: [String: Any]) -> some View {
     VStack(alignment: .leading, spacing: 0) {
-      VStack(alignment: .leading, spacing: 10) {
-        HStack(alignment: .top) {
-          VStack(alignment: .leading, spacing: 7) {
-            Text(section.title).font(.system(size: 27, weight: .bold))
-            Text(
-              "PID \(proc.int("pid") ?? 0)  ·  \(proc.str("user") ?? "—")  ·  运行 \(proc.str("etime") ?? "—")"
-            )
-            .font(.system(size: 13)).foregroundColor(.secondary)
+      VStack(alignment: .leading, spacing: 16) {
+        HStack(alignment: .top, spacing: 16) {
+          VStack(alignment: .leading, spacing: 6) {
+            Text("PID \(String(proc.int("pid") ?? 0))").font(.system(size: 20, weight: .semibold))
+            Text(shortenPath(proc.str("cwd")))
+              .font(.system(size: 13)).foregroundColor(.secondary)
+              .lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+            Text("\(proc.str("user") ?? "—") · 运行 \(proc.str("etime") ?? "—")")
+              .font(.system(size: 12)).foregroundColor(.secondary).monospacedDigit()
           }
           Spacer()
           let trust = trustPresentation(for: proc)
-          InspectionBadge(text: trust.label, color: trust.color)
-            .help(trust.explanation)
+          InspectionBadge(text: trust.label, color: trust.color).help(trust.explanation)
         }
-        if [.skills, .mcp, .agents].contains(section) {
-          TextField("搜索名称、描述或路径", text: $searchText)
-            .textFieldStyle(.roundedBorder)
-            .frame(maxWidth: 420)
-            .accessibilityLabel("搜索检查内容")
-        }
+        contentSelector
       }
-      .padding(28)
+      .padding(24)
       Divider()
       ScrollView {
-        LazyVStack(alignment: .leading, spacing: 18) {
+        LazyVStack(alignment: .leading, spacing: 16) {
           switch section {
           case .overview: overview(proc)
           case .configurations: configurationCards(proc)
@@ -512,14 +557,15 @@ struct InspectorWindowView: View {
           case .warnings: warningCards(proc)
           }
         }
-        .padding(28)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: 1120, alignment: .leading)
+        .padding(24).frame(maxWidth: .infinity)
       }
+      .id("process-\(selectedPID ?? 0)-\(section.rawValue)")
     }
   }
 
   private func overview(_ proc: [String: Any]) -> some View {
-    VStack(alignment: .leading, spacing: 18) {
+    VStack(alignment: .leading, spacing: 16) {
       LazyVGrid(
         columns: Array(repeating: GridItem(.flexible(minimum: 100), spacing: 14), count: 4),
         spacing: 14
@@ -596,7 +642,7 @@ struct InspectorWindowView: View {
 
   private func agentCards(_ proc: [String: Any]) -> some View {
     let docs = filtered(proc.dictArray("agents_chain"), fields: ["path", "scope"])
-    return VStack(alignment: .leading, spacing: 18) {
+    return VStack(alignment: .leading, spacing: 16) {
       HStack {
         Text("磁盘当前指令文件").font(.headline)
         Spacer()
@@ -632,11 +678,11 @@ struct InspectorWindowView: View {
   private func skillCards(_ proc: [String: Any]) -> some View {
     let skills = filtered(
       proc.dictArray("skills"), fields: ["name", "description", "path", "scope"])
-    return VStack(alignment: .leading, spacing: 18) {
+    return VStack(alignment: .leading, spacing: 16) {
       hint("Token 估算统计 SKILL.md 全文（含 frontmatter），不含引用文件和消息包装；不代表当前会话的实际用量。")
       if skills.isEmpty { hint(searchText.isEmpty ? "没有发现 Skills" : "没有匹配的 Skills") }
       ForEach(Array(skills.enumerated()), id: \.offset) { _, skill in
-        InspectionCard(title: skill.str("name") ?? "未命名 Skill", icon: "sparkles") {
+        InspectionCard(title: skill.str("name") ?? "未命名 Skill", icon: "doc.text") {
           HStack(spacing: 10) {
             InspectionBadge(
               text: skill.bool("enabled") == true ? "启用" : "禁用",
@@ -669,7 +715,7 @@ struct InspectorWindowView: View {
     let servers = proc.dictArray("mcp_servers").filter {
       searchText.isEmpty || jsonText($0).localizedCaseInsensitiveContains(searchText)
     }
-    return VStack(alignment: .leading, spacing: 18) {
+    return VStack(alignment: .leading, spacing: 16) {
       if servers.isEmpty { hint(searchText.isEmpty ? "没有配置 MCP 服务器" : "没有匹配的 MCP 服务器") }
       ForEach(Array(servers.enumerated()), id: \.offset) { _, server in
         InspectionCard(
@@ -696,9 +742,9 @@ struct InspectorWindowView: View {
   }
 
   private func warningCards(_ proc: [String: Any]) -> some View {
-    VStack(alignment: .leading, spacing: 18) {
+    VStack(alignment: .leading, spacing: 16) {
       let warnings = proc.stringArray("warnings")
-      if warnings.isEmpty { hint("当前进程没有诊断警告") }
+      if warnings.isEmpty { hint("当前检测对象没有诊断警告") }
       ForEach(Array(warnings.enumerated()), id: \.offset) { _, warning in
         diagnosticBanner(warning, color: .orange)
       }
@@ -756,6 +802,23 @@ struct InspectorWindowView: View {
     guard !searchText.isEmpty else { return items }
     return items.filter { item in
       fields.contains { item.str($0)?.localizedCaseInsensitiveContains(searchText) == true }
+    }
+  }
+
+  private var matchingSectionCount: Int {
+    guard let inspection = currentInspection else { return 0 }
+    switch section {
+    case .agents:
+      return filtered(inspection.dictArray("agents_chain"), fields: ["path", "scope"]).count
+    case .skills:
+      return filtered(
+        inspection.dictArray("skills"), fields: ["name", "description", "path", "scope"]
+      ).count
+    case .mcp:
+      return inspection.dictArray("mcp_servers").filter {
+        searchText.isEmpty || jsonText($0).localizedCaseInsensitiveContains(searchText)
+      }.count
+    default: return 0
     }
   }
 
@@ -824,7 +887,7 @@ struct InspectionCard<Content: View>: View {
       Label(title, systemImage: icon).font(.system(size: 15, weight: .semibold))
       content()
     }
-    .padding(22)
+    .padding(20)
     .frame(maxWidth: .infinity, alignment: .leading)
     .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
     .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.primary.opacity(0.06)))
@@ -839,8 +902,8 @@ private struct InspectionField: View {
 
   var body: some View {
     HStack(alignment: .top, spacing: 16) {
-      Text(label).font(.system(size: 12)).foregroundColor(.secondary)
-        .frame(width: 130, alignment: .leading)
+      Text(label).font(.system(size: 13)).foregroundColor(.secondary)
+        .frame(width: 112, alignment: .leading)
         .textSelection(.enabled)
       Text(value).font(.system(size: 13, design: monospaced ? .monospaced : .default))
         .textSelection(.enabled)

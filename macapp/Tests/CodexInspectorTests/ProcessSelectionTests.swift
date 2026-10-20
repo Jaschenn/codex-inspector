@@ -30,16 +30,16 @@ final class ProcessSelectionTests: XCTestCase {
 
   func testBackgroundServerWithoutGitProjectHasNeutralPresentation() {
     let proc: [String: Any] = ["cwd": "/", "is_git_repo": false, "trust_level": "unknown"]
-    XCTAssertEqual(trustPresentation(for: proc).label, "— 未关联 Git 项目")
+    XCTAssertEqual(trustPresentation(for: proc).label, "未关联 Git 项目")
   }
 
   func testDirectoryReadFailureRemainsUnknown() {
     let proc: [String: Any] = ["is_git_repo": false, "trust_level": "unknown"]
-    XCTAssertEqual(trustPresentation(for: proc).label, "❔ 信任状态未知")
+    XCTAssertEqual(trustPresentation(for: proc).label, "信任状态未知")
   }
 
   func testGitProjectWithMissingTrustRecordRemainsUnknown() {
     let proc: [String: Any] = ["cwd": "/project", "is_git_repo": true, "trust_level": "unknown"]
-    XCTAssertEqual(trustPresentation(for: proc).label, "❔ 信任状态未知")
+    XCTAssertEqual(trustPresentation(for: proc).label, "信任状态未知")
   }
 }
