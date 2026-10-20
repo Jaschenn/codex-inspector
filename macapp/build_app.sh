@@ -45,6 +45,11 @@ cp "$RUST_BINARY" "$STAGING/Contents/MacOS/codex-inspector-core"
 # executables before signing; keep development outputs and their diagnostics intact.
 xcrun strip -S -x "$STAGING/Contents/MacOS/$APP_NAME"
 cp "$ROOT_DIR/Info.plist" "$STAGING/Contents/Info.plist"
+echo "==> Render application icon"
+ICONSET="$STAGING/Contents/Resources/AppIcon.iconset"
+xcrun swift "$ROOT_DIR/tools/GenerateIcon.swift" "$ICONSET"
+xcrun iconutil -c icns "$ICONSET" -o "$STAGING/Contents/Resources/AppIcon.icns"
+rm -rf "$ICONSET"
 if [ -n "${CODEX_INSPECTOR_VERSION:-}" ]; then
   /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $CODEX_INSPECTOR_VERSION" "$STAGING/Contents/Info.plist"
   /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $CODEX_INSPECTOR_VERSION" "$STAGING/Contents/Info.plist"

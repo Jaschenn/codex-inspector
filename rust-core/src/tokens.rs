@@ -87,12 +87,14 @@ pub fn estimate(text: &str) -> (Option<usize>, Option<&'static str>, &'static st
     }
 }
 pub fn save() {
-    if let Ok(cache) = cache().lock() {
+    if let Ok(mut cache) = cache().lock() {
         if !cache.dirty {
             return;
         }
         if let Ok(bytes) = serde_json::to_vec(&*cache) {
-            let _ = crate::sessions::write_cache(&cache_path(), &bytes);
+            if crate::sessions::write_cache(&cache_path(), &bytes).is_ok() {
+                cache.dirty = false;
+            }
         }
     }
 }

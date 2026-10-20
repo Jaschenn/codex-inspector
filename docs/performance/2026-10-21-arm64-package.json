@@ -1,0 +1,8 @@
+{
+  "measured_at_utc": "2026-10-20T17:32:22.821096+00:00",
+  "method": "Baseline bundle repackaged with ditto -c -k --sequesterRsrc --keepParent; candidate is the final signed build_app.sh ZIP. ZIP timestamps/resource metadata can affect archive hashes and byte sizes.",
+  "baseline_zip_bytes": 2540489,
+  "candidate_zip_bytes": 2757124,
+  "baseline_zip_sha256": "bbee9f8fb170b11ea231433dcbad82af0e01aa9e6af7c1cfeb24f317b55c74d7",
+  "candidate_zip_sha256": "ee3e8e0aa0a331661e30f5f4299048d505e3ac7c0b073c263448f4294a7ac6dc"
+}

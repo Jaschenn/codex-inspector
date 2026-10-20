@@ -399,3 +399,29 @@ fn timeline(turn: &Turn) -> Value {
 pub fn summary(turn: &Turn) -> Value {
     json!({"tokens":usage_summary(&turn.metrics),"timing":timeline(turn)})
 }
+
+pub fn conversation_tokens(turns: &[Turn]) -> Value {
+    let records: Vec<_> = turns
+        .iter()
+        .map(|t| usage_summary(&t.metrics))
+        .filter(|s| s["usage"].is_object())
+        .collect();
+    let totals: Usage = TOKEN_FIELDS
+        .iter()
+        .filter(|k| !records.is_empty() && records.iter().all(|r| r["usage"][**k].is_u64()))
+        .map(|k| {
+            (
+                (*k).into(),
+                records
+                    .iter()
+                    .map(|r| r["usage"][*k].as_u64().unwrap_or(0))
+                    .sum(),
+            )
+        })
+        .collect();
+    // Sum attributable turns rather than a thread counter, which can include
+    // inherited usage after a fork. Missing turns/fields remain explicitly partial.
+    json!({"usage": if records.is_empty() { Value::Null } else { json!(totals) },
+        "recorded_turns": records.len(), "total_turns": turns.len(),
+        "partial": records.len() < turns.len() || turns.last().is_some_and(|t| t.completed_at.is_none())})
+}

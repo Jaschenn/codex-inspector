@@ -133,7 +133,7 @@ struct InspectorWindowView: View {
           Label("刷新", systemImage: "arrow.clockwise")
         }
         .keyboardShortcut("r", modifiers: .command)
-        .help("立即刷新 · 每 3 秒自动检查")
+        .help("立即刷新 · 日志变更触发更新，每秒兜底检查")
       }
     }
     .onAppear {
@@ -142,6 +142,18 @@ struct InspectorWindowView: View {
     }
     .onChange(of: processIDs) { _ in reconcileSelection() }
     .onChange(of: selectedPID) { _ in searchText = "" }
+    .onChange(of: fetcher.requestedDetailSessionID) { id in
+      if let id {
+        scope = .session
+        includeArchived = false
+        includeOtherSources = false
+        objectSearchText = ""
+        selectedSessionID = id
+        selectedTurnID = nil
+        updateSessionRequest()
+        fetcher.requestedDetailSessionID = nil
+      }
+    }
     .onChange(of: selectedSection) { _ in searchText = "" }
     .onChange(of: sessionIDs) { _ in reconcileSession() }
     .onChange(of: selectedSessionID) { _ in
@@ -208,7 +220,7 @@ struct InspectorWindowView: View {
         Circle().fill(fetcher.lastError == nil ? Color.green : Color.orange)
           .frame(width: 6, height: 6)
         VStack(alignment: .leading, spacing: 4) {
-          Text(fetcher.lastError == nil ? "每 3 秒自动检查" : "刷新失败，正在重试")
+          Text(fetcher.lastError == nil ? "自动更新 · 每秒兜底" : "刷新失败，正在重试")
           if let updated = fetcher.lastUpdated {
             Text("更新于 \(updated.formatted(date: .omitted, time: .standard))")
               .monospacedDigit()

@@ -7,6 +7,7 @@ use rusqlite::{Connection, OpenFlags, types::ValueRef};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
+    cell::RefCell,
     collections::{BTreeMap, BTreeSet},
     fs::{self, OpenOptions},
     io::{BufRead, BufReader, Read, Seek, SeekFrom, Write},
@@ -278,7 +279,7 @@ pub fn list(homes: &[PathBuf], archived: bool, other: bool) -> Vec<Value> {
     result.truncate(LIMIT);
     result
 }
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct State {
     version: u32,
     offset: u64,
@@ -563,6 +564,20 @@ pub fn write_cache(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     result
 }
 pub fn index(path: &Path) -> Result<State, String> {
+    thread_local! { static INDEXES: RefCell<BTreeMap<PathBuf, State>> = const { RefCell::new(BTreeMap::new()) }; }
+    INDEXES.with(|indexes| {
+        let mut indexes = indexes.borrow_mut();
+        let state = index_from(path, indexes.get(path).cloned())?;
+        // Bound memory when the user browses many large historical conversations.
+        if indexes.len() >= 8 && !indexes.contains_key(path) {
+            indexes.clear();
+        }
+        indexes.insert(path.to_path_buf(), state.clone());
+        Ok(state)
+    })
+}
+
+fn index_from(path: &Path, memory: Option<State>) -> Result<State, String> {
     let root = std::env::var_os("CODEX_INSPECTOR_CACHE_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| util::home().join("Library/Caches/CodexInspector"));
@@ -573,9 +588,11 @@ pub fn index(path: &Path) -> Result<State, String> {
     let mut file = fs::File::open(path).map_err(|e| e.to_string())?;
     let stat = file.metadata().map_err(|e| e.to_string())?;
     let mtime = i128::from(stat.mtime()) * 1_000_000_000 + i128::from(stat.mtime_nsec());
-    let cached = fs::read(&cache)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<State>(&bytes).ok());
+    let cached = memory.or_else(|| {
+        fs::read(&cache)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<State>(&bytes).ok())
+    });
     let mut state = State::default();
     if let Some(cached) = cached {
         // A Zstd stream cannot seek to a decoded offset. Reuse immutable archive indexes,
@@ -650,6 +667,16 @@ pub fn index(path: &Path) -> Result<State, String> {
     Ok(state)
 }
 pub fn inspect(summary: &Value, turn_id: Option<&str>) -> Result<Value, String> {
+    inspect_detail(summary, turn_id, true)
+}
+
+/// Menu summaries use the same log evidence but avoid generating configuration
+/// and instruction previews that are only needed in the detail window.
+pub fn menu(summary: &Value) -> Result<Value, String> {
+    inspect_detail(summary, None, false)
+}
+
+fn inspect_detail(summary: &Value, turn_id: Option<&str>, detailed: bool) -> Result<Value, String> {
     let mut result = summary.clone();
     result["requested_turn_id"] = json!(turn_id);
     result["turns"] = json!([]);
@@ -669,7 +696,9 @@ pub fn inspect(summary: &Value, turn_id: Option<&str>) -> Result<Value, String> 
             return Ok(result);
         }
     };
-    result["turns"] = json!(state.turns.iter().map(|t| json!({"id":t.id,"number":t.number,"started_at":t.started_at,"completed_at":t.completed_at,"status":t.status,"cwd":t.cwd,"model":t.model,"user_preview":t.user_preview,"tool_count":t.tool_count})).collect::<Vec<_>>());
+    if detailed {
+        result["turns"] = json!(state.turns.iter().map(|t| json!({"id":t.id,"number":t.number,"started_at":t.started_at,"completed_at":t.completed_at,"status":t.status,"cwd":t.cwd,"model":t.model,"user_preview":t.user_preview,"tool_count":t.tool_count})).collect::<Vec<_>>());
+    }
     let selected = if let Some(id) = turn_id {
         state.turns.iter().find(|t| t.id == id)
     } else {
@@ -683,11 +712,27 @@ pub fn inspect(summary: &Value, turn_id: Option<&str>) -> Result<Value, String> 
         });
         return Ok(result);
     };
-    let mut selected_value = serde_json::to_value(selected).map_err(|e| e.to_string())?;
-    if let Some(object) = selected_value.as_object_mut() {
-        object.remove("metrics");
-    }
+    // Metrics can hold thousands of intervals; do not serialize them only to
+    // immediately discard them. The public summary includes derived totals.
+    let mut selected_value = json!({"id":selected.id,"number":selected.number,
+        "started_at":selected.started_at,"completed_at":selected.completed_at,"status":selected.status,
+        "cwd":selected.cwd,"model":selected.model,"tool_count":selected.tool_count,
+        "user_preview":selected.user_preview,"assistant_preview":selected.assistant_preview,
+        "instruction_ids":selected.instruction_ids,"instruction_sources":selected.instruction_sources});
     selected_value["statistics"] = statistics::summary(selected);
+    if !detailed {
+        for key in [
+            "user_preview",
+            "assistant_preview",
+            "instruction_ids",
+            "instruction_sources",
+        ] {
+            selected_value.as_object_mut().unwrap().remove(key);
+        }
+        result["conversation_tokens"] = statistics::conversation_tokens(&state.turns);
+        result["selected_turn"] = selected_value;
+        return Ok(result);
+    }
     result["selected_turn"] = selected_value;
     result["recorded_instructions"] = json!(
         selected

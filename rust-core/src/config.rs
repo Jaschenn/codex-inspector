@@ -1,7 +1,10 @@
 use crate::{tokens, util};
 use serde_json::{Value, json};
 use std::{
+    cell::RefCell,
+    collections::BTreeMap,
     fs,
+    os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
 };
 
@@ -55,14 +58,6 @@ pub fn scalar(raw: &str) -> Value {
         .unwrap_or_else(|| json!(raw))
 }
 pub fn git_root(cwd: &Path) -> Option<PathBuf> {
-    if let Ok((true, output, _)) = util::command(
-        "/usr/bin/git",
-        &["-C", &cwd.to_string_lossy(), "rev-parse", "--show-toplevel"],
-    ) {
-        if !output.trim().is_empty() {
-            return Some(PathBuf::from(output.trim()));
-        }
-    }
     if !cwd.is_dir() {
         return None;
     }
@@ -83,6 +78,19 @@ pub fn git_root(cwd: &Path) -> Option<PathBuf> {
                     return Some(directory.to_path_buf());
                 }
             }
+        }
+        // Unusual Git layouts retain the authoritative CLI fallback. Ordinary
+        // repos/worktrees and non-repo directories need no external command.
+        if directory.join(".git").exists() {
+            if let Ok((true, output, _)) = util::command(
+                "/usr/bin/git",
+                &["-C", &cwd.to_string_lossy(), "rev-parse", "--show-toplevel"],
+            ) {
+                if !output.trim().is_empty() {
+                    return Some(PathBuf::from(output.trim()));
+                }
+            }
+            return None;
         }
     }
     None
@@ -272,7 +280,7 @@ fn skills(home: &Path, cwd: &Path, root: Option<&Path>, merged: &Value) -> Vec<V
     }
     result
 }
-pub fn report(
+fn uncached_report(
     home: &Path,
     cwd: &Path,
     profile: Option<&str>,
@@ -291,4 +299,84 @@ pub fn report(
         "trust_level":inspection.trust,"config_layers":inspection.layers,
         "agents_chain":agents(home,cwd,inspection.root.as_deref()),"skills":skills(home,cwd,inspection.root.as_deref(),&inspection.merged),
         "mcp_servers":servers,"merged_config":redacted,"cli_overrides":{"profile":null,"cd":null,"config_path":null,"codex_home":null,"c_overrides":[]},"warnings":[]})
+}
+
+type FileStamp = Option<(u64, u64, u32, u64, i64, i64, i64, i64)>;
+type Signature = Vec<(PathBuf, FileStamp)>;
+
+fn stamp(path: PathBuf, signature: &mut Signature) {
+    let metadata = fs::metadata(&path).ok().map(|m| {
+        (
+            m.dev(),
+            m.ino(),
+            m.mode(),
+            m.len(),
+            m.mtime(),
+            m.mtime_nsec(),
+            m.ctime(),
+            m.ctime_nsec(),
+        )
+    });
+    signature.push((path, metadata));
+}
+
+fn signature(home: &Path, cwd: &Path, profile: Option<&str>) -> Signature {
+    let mut result = Vec::new();
+    stamp(PathBuf::from("/etc/codex/config.toml"), &mut result);
+    stamp(home.join("config.toml"), &mut result);
+    if let Some(profile) = profile {
+        stamp(home.join(format!("{profile}.config.toml")), &mut result);
+    }
+    // Include missing files and directory listings: creating an override, deleting
+    // a Skill, replacing a symlink, chmod and Git-root changes must invalidate too.
+    for base in std::iter::once(home).chain(cwd.ancestors()) {
+        stamp(base.to_path_buf(), &mut result);
+        stamp(base.join(".git"), &mut result);
+        stamp(base.join("AGENTS.override.md"), &mut result);
+        stamp(base.join("AGENTS.md"), &mut result);
+        stamp(base.join(".codex/config.toml"), &mut result);
+        for directory in [base.join(".agents/skills"), base.join(".codex/skills")]
+            .into_iter()
+            .chain((base == home).then(|| home.join("skills")))
+        {
+            stamp(directory.clone(), &mut result);
+            let mut paths: Vec<_> = fs::read_dir(directory)
+                .into_iter()
+                .flatten()
+                .filter_map(Result::ok)
+                .map(|e| e.path().join("SKILL.md"))
+                .collect();
+            paths.sort();
+            for path in paths {
+                stamp(path, &mut result);
+            }
+        }
+    }
+    result
+}
+
+pub fn report(
+    home: &Path,
+    cwd: &Path,
+    profile: Option<&str>,
+    overrides: &[(String, Value)],
+) -> Value {
+    type Cache = BTreeMap<String, (Signature, Value)>;
+    thread_local! { static CACHE: RefCell<Cache> = const { RefCell::new(BTreeMap::new()) }; }
+    let key = json!([home, cwd, profile, overrides]).to_string();
+    let current = signature(home, cwd, profile);
+    CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if let Some((previous, value)) = cache.get(&key) {
+            if previous == &current {
+                return value.clone();
+            }
+        }
+        let value = uncached_report(home, cwd, profile, overrides);
+        if cache.len() >= 32 {
+            cache.clear();
+        }
+        cache.insert(key, (current, value.clone()));
+        value
+    })
 }

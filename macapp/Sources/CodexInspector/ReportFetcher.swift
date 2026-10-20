@@ -6,7 +6,6 @@ struct FetchError: Error, CustomStringConvertible {
   init(_ message: String) { self.description = message }
 }
 
-/// 定时调用 Rust 检查引擎，读取 JSON 快照；日志和 Skill 分词均复用本地增量缓存。
 final class ReportFetcher: ObservableObject {
   @Published var report: [String: Any] = [
     "generated_at": "", "process_count": 0, "processes": [], "process_errors": [],
@@ -15,57 +14,120 @@ final class ReportFetcher: ObservableObject {
   @Published var lastUpdated: Date?
   @Published var isRefreshing = false
   @Published var isSessionLoading = false
+  @Published var requestedDetailSessionID: String?
 
   private struct InspectionRequest: Equatable {
     var sessionID: String?
     var turnID: String?
     var includeArchived = false
     var includeOtherSources = false
+    var menuPID: Int?
+    var menuSessionID: String?
+
+    var payload: [String: Any] {
+      var result: [String: Any] = [
+        "sessions": true, "menu": true, "include_archived": includeArchived,
+        "include_other_sources": includeOtherSources,
+      ]
+      if let sessionID { result["session_id"] = sessionID }
+      if let turnID { result["turn_id"] = turnID }
+      if let menuPID { result["menu_pid"] = menuPID }
+      if let menuSessionID { result["menu_session_id"] = menuSessionID }
+      return result
+    }
   }
   private var inspectionRequest = InspectionRequest()
+  private var timer: Timer?
+  private var eventRefresh: DispatchWorkItem?
+  private var lastStarted = Date.distantPast
+  private var isRequestRunning = false
+  private var needsRefresh = false
+  private let queue = DispatchQueue(label: "CodexInspector.engine", qos: .userInitiated)
+  private let engine: InspectorEngine
+  private lazy var monitor = InspectionMonitor { [weak self] in self?.scheduleEventRefresh() }
+
+  init(interval: TimeInterval = 1.0) {
+    engine = InspectorEngine(
+      executable: Bundle.main.bundleURL
+        .appendingPathComponent("Contents/MacOS/codex-inspector-core"))
+    refresh()
+    timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
+      self?.fetch(showProgress: false)
+    }
+    timer?.tolerance = 0.1
+    if let timer { RunLoop.main.add(timer, forMode: .common) }
+  }
+
+  deinit {
+    timer?.invalidate()
+    eventRefresh?.cancel()
+  }
 
   func selectSession(
     _ sessionID: String?, turnID: String?, includeArchived: Bool = false,
     includeOtherSources: Bool = false
   ) {
-    let request = InspectionRequest(
-      sessionID: sessionID, turnID: turnID, includeArchived: includeArchived,
-      includeOtherSources: includeOtherSources)
+    var request = inspectionRequest
+    request.sessionID = sessionID
+    request.turnID = turnID
+    request.includeArchived = includeArchived
+    request.includeOtherSources = includeOtherSources
     guard request != inspectionRequest else { return }
     inspectionRequest = request
     isSessionLoading = sessionID != nil
     refresh()
   }
 
-  private var timer: Timer?
-  private let interval: TimeInterval
-  private let inspectorExecutable: URL
-
-  init(interval: TimeInterval = 3.0) {
-    self.interval = interval
-    self.inspectorExecutable = Bundle.main.bundleURL
-      .appendingPathComponent("Contents/MacOS/codex-inspector-core")
-
+  func selectMenuProcess(_ pid: Int?) {
+    guard pid != inspectionRequest.menuPID else { return }
+    inspectionRequest.menuPID = pid
+    inspectionRequest.menuSessionID = nil
     refresh()
-    timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
-      self?.refresh()
-    }
   }
 
-  deinit { timer?.invalidate() }
+  func selectMenuSession(_ id: String?) {
+    guard id != inspectionRequest.menuSessionID else { return }
+    inspectionRequest.menuSessionID = id
+    refresh()
+  }
 
-  func refresh() {
-    guard !isRefreshing else { return }
-    isRefreshing = true
+  func showMenuSessionInDetail() {
+    requestedDetailSessionID = report.subDict("menu_session").str("id")
+  }
+
+  func refresh() { fetch(showProgress: true) }
+
+  private func scheduleEventRefresh() {
+    // Coalesce bursts without postponing forever during continuous token output.
+    guard eventRefresh == nil else { return }
+    let delay = max(0.05, 0.3 - Date().timeIntervalSince(lastStarted))
+    let work = DispatchWorkItem { [weak self] in
+      self?.eventRefresh = nil
+      self?.fetch(showProgress: false)
+    }
+    eventRefresh = work
+    DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+  }
+
+  private func fetch(showProgress: Bool) {
+    if isRequestRunning {
+      needsRefresh = true
+      if showProgress { isRefreshing = true }
+      return
+    }
+    isRequestRunning = true
+    if showProgress { isRefreshing = true }
+    needsRefresh = false
+    lastStarted = Date()
     let request = inspectionRequest
-    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+    queue.async { [weak self] in
       guard let self else { return }
-      let result = self.runInspector(request: request)
+      let result = self.engine.request(request.payload)
       DispatchQueue.main.async {
+        self.isRequestRunning = false
         self.isRefreshing = false
-        // 快速切换聊天时丢弃旧请求，避免上一聊天的内容闪现在新选择下。
         guard request == self.inspectionRequest else {
-          self.refresh()
+          self.fetch(showProgress: self.isSessionLoading)
           return
         }
         self.isSessionLoading = false
@@ -74,82 +136,11 @@ final class ReportFetcher: ObservableObject {
           self.report = dict
           self.lastError = nil
           self.lastUpdated = Date()
-        case .failure(let error):
-          self.lastError = error.description
+          self.monitor.watch(report: dict)
+        case .failure(let error): self.lastError = error.description
         }
+        if self.needsRefresh { self.scheduleEventRefresh() }
       }
-    }
-  }
-
-  private func runInspector(request: InspectionRequest) -> Result<[String: Any], FetchError> {
-    guard FileManager.default.isExecutableFile(atPath: inspectorExecutable.path) else {
-      return .failure(FetchError("找不到 Rust 检查引擎:\n\(inspectorExecutable.path)\n请检查应用打包是否完整。"))
-    }
-
-    let process = Process()
-    process.executableURL = inspectorExecutable
-    var arguments = ["--json", "--sessions"]
-    if let sessionID = request.sessionID { arguments += ["--session-id", sessionID] }
-    if let turnID = request.turnID { arguments += ["--turn-id", turnID] }
-    if request.includeArchived { arguments.append("--include-archived") }
-    if request.includeOtherSources { arguments.append("--include-other-sources") }
-    process.arguments = arguments
-
-    let outPipe = Pipe()
-    let errPipe = Pipe()
-    process.standardOutput = outPipe
-    process.standardError = errPipe
-
-    do {
-      try process.run()
-    } catch {
-      return .failure(FetchError("无法启动探测进程: \(error.localizedDescription)"))
-    }
-
-    // 并发读两个管道再 wait,而不是顺序 readDataToEndOfFile:如果子进程往 stderr 写的量
-    // 超过管道缓冲区(macOS 上通常 64KB),顺序读 stdout 会在 stdout 读完前一直卡住,
-    // 而子进程这时候正卡在写 stderr 上——谁也过不去,死锁。
-    var outData = Data()
-    var errData = Data()
-    let group = DispatchGroup()
-    group.enter()
-    DispatchQueue.global(qos: .userInitiated).async {
-      outData = outPipe.fileHandleForReading.readDataToEndOfFile()
-      group.leave()
-    }
-    group.enter()
-    DispatchQueue.global(qos: .userInitiated).async {
-      errData = errPipe.fileHandleForReading.readDataToEndOfFile()
-      group.leave()
-    }
-    group.wait()
-    process.waitUntilExit()
-
-    if process.terminationStatus != 0 || !errData.isEmpty {
-      DebugLog.write(
-        "exit=\(process.terminationStatus) stdoutBytes=\(outData.count) "
-          + "stderr: \(String(data: errData, encoding: .utf8) ?? "<非 utf8>")"
-      )
-    }
-
-    guard process.terminationStatus == 0 else {
-      let errText = String(data: errData, encoding: .utf8) ?? "unknown error"
-      return .failure(FetchError("探测进程退出码 \(process.terminationStatus):\n\(errText)"))
-    }
-
-    do {
-      guard let obj = try JSONSerialization.jsonObject(with: outData) as? [String: Any] else {
-        DebugLog.write(
-          "顶层不是对象, 原始输出前 500 字节: \(String(data: outData.prefix(500), encoding: .utf8) ?? "<非 utf8>")"
-        )
-        return .failure(FetchError("JSON 解析失败:顶层不是对象"))
-      }
-      return .success(obj)
-    } catch {
-      let raw = String(data: outData, encoding: .utf8) ?? "<非 utf8, \(outData.count) 字节>"
-      DebugLog.write("JSON 解析异常: \(error.localizedDescription)\n完整原始输出:\n\(raw)")
-      return .failure(
-        FetchError("JSON 解析失败: \(error.localizedDescription)\n输出: \(raw.prefix(300))"))
     }
   }
 }

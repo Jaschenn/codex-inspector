@@ -1,0 +1,898 @@
+{
+  "environment": {
+    "measured_at_utc": "2026-10-20T17:33:49.125392+00:00",
+    "machine": "Mac16,1",
+    "processor": "Apple M4",
+    "cores": 10,
+    "memory_bytes": 17179869184,
+    "os": "ProductName:\t\tmacOS\nProductVersion:\t\t27.0.1\nBuildVersion:\t\t26A434",
+    "python": "3.13.5"
+  },
+  "baseline_binary": {
+    "app_bytes": 4763255,
+    "ui_sha256": "16e0c900a4946f04214987cfc1eb2b515ab722ee30c5933d4274fe267fee6730",
+    "core_sha256": "d1d423d6f88afba573b2028bb21e31f7675c673d09b40c59aebdb16b1d5c4b8c"
+  },
+  "candidate_binary": {
+    "app_bytes": 5045362,
+    "ui_sha256": "78ef04737b51ea36d6f4f30f61f5a5987e81e2b364c169f92d6143e00b0be9a4",
+    "core_sha256": "5d41898961ec9012e1d37be5cb7c7e13652a89dce7a88597ef59e181716efaf4"
+  },
+  "baseline_revision": "85a7cffb393384f52ad14d8368eb4e3417c88873",
+  "method": "Baseline: new CLI process per check. Candidate: one pipe-owned engine, latest-turn detail plus menu summary. Disk caches prewarmed; sequential unthrottled requests, JSON decoding outside wall-time interval. CPU includes all measured child processes, excludes UI/Python parent.",
+  "baseline": {
+    "wall_ms": {
+      "count": 50,
+      "median": 140.2585205,
+      "p95": 144.052666,
+      "min": 133.602917,
+      "max": 155.676625,
+      "samples": [
+        155.676625,
+        140.290916,
+        139.506042,
+        140.5335,
+        140.759917,
+        139.517875,
+        141.665708,
+        142.074167,
+        136.196792,
+        140.878625,
+        142.53175,
+        142.193917,
+        142.397,
+        137.442334,
+        142.473959,
+        138.90925,
+        138.526458,
+        144.052666,
+        139.515875,
+        138.35575,
+        133.602917,
+        143.777375,
+        144.178083,
+        135.276042,
+        140.585209,
+        137.1635,
+        138.457333,
+        135.444959,
+        135.698917,
+        137.293875,
+        142.413208,
+        139.553959,
+        140.934958,
+        139.848708,
+        140.953916,
+        137.233709,
+        140.216708,
+        139.705291,
+        141.231791,
+        141.548583,
+        142.028125,
+        141.238875,
+        139.37325,
+        140.226125,
+        139.570417,
+        141.11,
+        137.020792,
+        141.777708,
+        139.414167,
+        140.888583
+      ]
+    },
+    "children_cpu_ms_per_check": 91.8309,
+    "workloads": [
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 124791,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      }
+    ]
+  },
+  "candidate": {
+    "first_snapshot_ms": 16.606458,
+    "warm_wall_ms": {
+      "count": 50,
+      "median": 6.7439789999999995,
+      "p95": 7.372333,
+      "min": 5.837667,
+      "max": 7.491875,
+      "samples": [
+        6.846084,
+        7.334375,
+        7.372333,
+        6.695792,
+        6.164291,
+        6.740667,
+        6.3025,
+        6.699791,
+        6.29925,
+        6.782042,
+        6.760375,
+        6.163708,
+        6.4435,
+        5.942167,
+        6.803209,
+        6.362042,
+        6.552917,
+        6.690292,
+        6.905416,
+        6.822833,
+        6.811416,
+        7.3385,
+        7.097959,
+        6.831125,
+        6.255875,
+        5.837667,
+        6.166542,
+        6.7125,
+        6.204042,
+        6.684333,
+        6.444667,
+        7.491875,
+        7.23475,
+        6.432084,
+        6.4195,
+        6.866375,
+        6.896875,
+        6.458708,
+        6.899875,
+        6.699209,
+        7.362875,
+        6.900291,
+        7.454,
+        6.801208,
+        6.969709,
+        6.695042,
+        7.308083,
+        6.442958,
+        7.238459,
+        6.747291
+      ]
+    },
+    "children_cpu_ms_per_check_including_startup": 6.811627450980398,
+    "workloads": [
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      },
+      {
+        "process_count": 2,
+        "session_count": 57,
+        "selected_turn_count": 28,
+        "snapshot_bytes": 187191,
+        "selected_session_sha256": "3567f65187c7b066884bb3dc0a4dc852875481eeb7ecb80a2c337d164ea4de2e"
+      }
+    ]
+  },
+  "selected_snapshot_identical_across_all_timed_requests": true,
+  "candidate_new_process_first_snapshot_ms": {
+    "count": 10,
+    "median": 17.053646,
+    "p95": 18.316834,
+    "min": 16.390584,
+    "max": 18.316834,
+    "samples": [
+      17.024417,
+      16.390584,
+      16.966708,
+      17.082875,
+      17.23975,
+      16.653875,
+      16.834959,
+      18.177959,
+      18.316834,
+      17.47475
+    ]
+  },
+  "baseline_new_process_first_snapshot_ms": {
+    "count": 10,
+    "median": 141.5706045,
+    "p95": 204.970166,
+    "min": 136.775958,
+    "max": 204.970166,
+    "samples": [
+      136.775958,
+      141.560542,
+      141.247792,
+      168.008875,
+      178.778667,
+      141.580667,
+      139.0825,
+      140.75925,
+      204.970166,
+      165.515
+    ]
+  }
+}

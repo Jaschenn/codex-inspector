@@ -55,6 +55,10 @@ fn overrides(cmdline: &str) -> Overrides {
     result
 }
 pub fn scan() -> Result<Vec<RawProcess>, String> {
+    #[cfg(target_os = "macos")]
+    if let Some(processes) = native_scan() {
+        return Ok(processes);
+    }
     let (ok, output, error) = util::command("/bin/ps", &["-axo", "pid=,user=,etime=,command="])?;
     if !ok {
         return Err(format!("无法列出进程: {error}"));
@@ -84,7 +88,7 @@ pub fn scan() -> Result<Vec<RawProcess>, String> {
     Ok(result)
 }
 #[cfg(target_os = "macos")]
-fn native_env(pid: u32) -> Option<BTreeMap<String, String>> {
+fn native_arguments(pid: u32) -> Option<(Vec<String>, BTreeMap<String, String>)> {
     let mut mib = [
         libc::CTL_KERN,
         libc::KERN_PROCARGS2,
@@ -126,8 +130,15 @@ fn native_env(pid: u32) -> Option<BTreeMap<String, String>> {
         while data.get(position) == Some(&0) {
             position += 1;
         }
+        let mut arguments = Vec::new();
         for _ in 0..argc {
-            position += data.get(position..)?.iter().position(|b| *b == 0)? + 1;
+            let length = data.get(position..)?.iter().position(|b| *b == 0)?;
+            arguments.push(
+                std::str::from_utf8(data.get(position..position + length)?)
+                    .ok()?
+                    .to_owned(),
+            );
+            position += length + 1;
         }
         let mut result = BTreeMap::new();
         for entry in data.get(position..)?.split(|b| *b == 0) {
@@ -137,12 +148,14 @@ fn native_env(pid: u32) -> Option<BTreeMap<String, String>> {
                 }
             }
         }
-        if result.is_empty() {
-            None
-        } else {
-            Some(result)
-        }
+        Some((arguments, result))
     }
+}
+#[cfg(target_os = "macos")]
+fn native_env(pid: u32) -> Option<BTreeMap<String, String>> {
+    native_arguments(pid)
+        .map(|(_, env)| env)
+        .filter(|env| !env.is_empty())
 }
 #[cfg(not(target_os = "macos"))]
 fn native_env(_pid: u32) -> Option<BTreeMap<String, String>> {
@@ -175,19 +188,23 @@ fn env(pid: u32) -> (BTreeMap<String, String>, &'static str) {
     (result, status)
 }
 pub fn inspect(process: &RawProcess) -> Result<Value, String> {
-    let (cwd, error) = match util::command(
-        "/usr/sbin/lsof",
-        &["-a", "-p", &process.pid.to_string(), "-d", "cwd", "-Fn"],
-    ) {
-        Ok((true, out, _)) => match out.lines().find_map(|l| l.strip_prefix('n')) {
-            Some(s) => (Some(s.to_owned()), None),
-            None => (None, Some("lsof 未返回 cwd 条目".to_owned())),
-        },
-        Ok((false, _, err)) => (
-            None,
-            Some(format!("lsof 读取失败(可能是权限不足或进程已退出): {err}")),
-        ),
-        Err(err) => (None, Some(err)),
+    let (cwd, error) = if let Some(cwd) = native_cwd(process.pid) {
+        (Some(cwd), None)
+    } else {
+        match util::command(
+            "/usr/sbin/lsof",
+            &["-a", "-p", &process.pid.to_string(), "-d", "cwd", "-Fn"],
+        ) {
+            Ok((true, out, _)) => match out.lines().find_map(|l| l.strip_prefix('n')) {
+                Some(s) => (Some(s.to_owned()), None),
+                None => (None, Some("lsof 未返回 cwd 条目".to_owned())),
+            },
+            Ok((false, _, err)) => (
+                None,
+                Some(format!("lsof 读取失败(可能是权限不足或进程已退出): {err}")),
+            ),
+            Err(err) => (None, Some(err)),
+        }
     };
     let (env, status) = env(process.pid);
     let overrides = overrides(&process.cmdline);
@@ -236,4 +253,129 @@ pub fn inspect(process: &RawProcess) -> Result<Value, String> {
     report["cli_overrides"] = serde_json::to_value(overrides).map_err(|e| e.to_string())?;
     report["warnings"] = json!(warnings);
     Ok(report)
+}
+
+#[cfg(target_os = "macos")]
+fn native_cwd(pid: u32) -> Option<String> {
+    let size = std::mem::size_of::<libc::proc_vnodepathinfo>();
+    let mut info = std::mem::MaybeUninit::<libc::proc_vnodepathinfo>::zeroed();
+    // libproc returns the cwd without launching lsof for every process and refresh.
+    // Only interpret the buffer when the kernel returned the complete structure.
+    let bytes = unsafe {
+        libc::proc_pidinfo(
+            i32::try_from(pid).ok()?,
+            libc::PROC_PIDVNODEPATHINFO,
+            0,
+            info.as_mut_ptr().cast(),
+            i32::try_from(size).ok()?,
+        )
+    };
+    if usize::try_from(bytes).ok()? != size {
+        return None;
+    }
+    let info = unsafe { info.assume_init() };
+    let path: Vec<u8> = info
+        .pvi_cdir
+        .vip_path
+        .iter()
+        .flatten()
+        .take_while(|c| **c != 0)
+        .map(|c| *c as u8)
+        .collect();
+    String::from_utf8(path).ok().filter(|p| p.starts_with('/'))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn native_cwd(_pid: u32) -> Option<String> {
+    None
+}
+
+#[cfg(target_os = "macos")]
+fn native_scan() -> Option<Vec<RawProcess>> {
+    use std::ffi::CStr;
+    // Enumerate IDs and names first; fetch arguments/owner/start time only for
+    // Codex. This avoids ps formatting every process's entire command line.
+    let count = unsafe { libc::proc_listallpids(std::ptr::null_mut(), 0) };
+    if count <= 0 {
+        return None;
+    }
+    let mut pids = vec![0_i32; count as usize + 256];
+    let size = i32::try_from(pids.len() * std::mem::size_of::<i32>()).ok()?;
+    let count = unsafe { libc::proc_listallpids(pids.as_mut_ptr().cast(), size) };
+    if count <= 0 || count as usize >= pids.len() {
+        return None;
+    }
+    pids.truncate(count as usize);
+    pids.sort_unstable();
+    let mut result = Vec::new();
+    for pid in pids.into_iter().filter(|pid| *pid > 0) {
+        let mut name = [0_u8; 1024];
+        let length = unsafe { libc::proc_name(pid, name.as_mut_ptr().cast(), name.len() as u32) };
+        if length <= 0 || name.split(|b| *b == 0).next()? != b"codex" {
+            continue;
+        }
+        let (arguments, _) = native_arguments(pid as u32)?;
+        let first = arguments.first()?;
+        if Path::new(first)
+            .file_name()
+            .is_none_or(|name| name != "codex")
+        {
+            continue;
+        }
+        let size = std::mem::size_of::<libc::proc_bsdinfo>();
+        let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::zeroed();
+        let length = unsafe {
+            libc::proc_pidinfo(
+                pid,
+                libc::PROC_PIDTBSDINFO,
+                0,
+                info.as_mut_ptr().cast(),
+                size as i32,
+            )
+        };
+        if length as usize != size {
+            return None;
+        }
+        let info = unsafe { info.assume_init() };
+        let owner = unsafe { libc::getpwuid(info.pbi_uid) };
+        let user = if owner.is_null() {
+            info.pbi_uid.to_string()
+        } else {
+            unsafe { CStr::from_ptr((*owner).pw_name) }
+                .to_string_lossy()
+                .into_owned()
+        };
+        let seconds =
+            (chrono::Utc::now().timestamp().max(0) as u64).saturating_sub(info.pbi_start_tvsec);
+        let etime = if seconds >= 86400 {
+            format!(
+                "{}-{:02}:{:02}:{:02}",
+                seconds / 86400,
+                seconds / 3600 % 24,
+                seconds / 60 % 60,
+                seconds % 60
+            )
+        } else if seconds >= 3600 {
+            format!(
+                "{:02}:{:02}:{:02}",
+                seconds / 3600,
+                seconds / 60 % 60,
+                seconds % 60
+            )
+        } else {
+            format!("{:02}:{:02}", seconds / 60, seconds % 60)
+        };
+        let cmdline = arguments
+            .iter()
+            .map(|s| shlex::try_quote(s).ok().map(|s| s.into_owned()))
+            .collect::<Option<Vec<_>>>()?
+            .join(" ");
+        result.push(RawProcess {
+            pid: pid as u32,
+            user,
+            etime,
+            cmdline,
+        });
+    }
+    Some(result)
 }

@@ -2,40 +2,47 @@ import SwiftUI
 
 @main
 struct CodexInspectorApp: App {
-    @StateObject private var fetcher = ReportFetcher(interval: 3.0)
+  @StateObject private var fetcher = ReportFetcher()
 
-    var body: some Scene {
-        Window("Codex Inspector", id: "inspector") {
-            InspectorWindowView(fetcher: fetcher)
-        }
-        .defaultSize(width: 1160, height: 780)
-        .windowResizability(.contentMinSize)
-
-        MenuBarExtra {
-            MenuContentView(fetcher: fetcher)
-        } label: {
-            MenuBarLabel(fetcher: fetcher)
-        }
-        .menuBarExtraStyle(.window)
+  var body: some Scene {
+    Window("Codex Inspector", id: "inspector") {
+      InspectorWindowView(fetcher: fetcher)
     }
+    .defaultSize(width: 1160, height: 780)
+    .windowResizability(.contentMinSize)
+
+    // Keep the same compact summary available from the Window menu, including
+    // when macOS hides a status item because the menu bar has insufficient space.
+    Window("活动统计", id: "activity") {
+      MenuContentView(fetcher: fetcher)
+    }
+    .windowResizability(.contentSize)
+
+    MenuBarExtra {
+      MenuContentView(fetcher: fetcher)
+    } label: {
+      MenuBarLabel(fetcher: fetcher)
+    }
+    .menuBarExtraStyle(.window)
+  }
 }
 
 struct MenuBarLabel: View {
-    @ObservedObject var fetcher: ReportFetcher
+  @ObservedObject var fetcher: ReportFetcher
 
-    private var count: Int { fetcher.report.int("process_count") ?? 0 }
+  private var count: Int { fetcher.report.int("process_count") ?? 0 }
 
-    var body: some View {
-        HStack(spacing: 3) {
-            Image(systemName: iconName)
-            if fetcher.lastError == nil {
-                Text("\(count)")
-            }
-        }
+  var body: some View {
+    HStack(spacing: 3) {
+      Image(systemName: iconName)
+      if fetcher.lastError == nil {
+        Text("\(count)")
+      }
     }
+  }
 
-    private var iconName: String {
-        if fetcher.lastError != nil { return "exclamationmark.triangle" }
-        return count > 0 ? "bolt.fill" : "bolt.slash"
-    }
+  private var iconName: String {
+    if fetcher.lastError != nil { return "exclamationmark.triangle" }
+    return "terminal"
+  }
 }
