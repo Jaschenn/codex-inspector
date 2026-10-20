@@ -7,6 +7,7 @@
     - 同名 skill 不会被合并去重,两个都会出现——这里如实列出,不擅自去重。
     - ~/.codex/config.toml 里的 [[skills.config]] 可以按路径禁用某个 skill,即使文件还在。
 """
+
 from __future__ import annotations
 
 import re
@@ -14,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import SkillEntry
+from .token_count import estimate_text_tokens
 
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 
@@ -77,7 +79,9 @@ def build_skills_overrides(merged_config: dict[str, Any]) -> dict[str, bool]:
     if isinstance(entries, list):
         for entry in entries:
             if isinstance(entry, dict) and "path" in entry and "enabled" in entry:
-                overrides[str(Path(entry["path"]).expanduser())] = bool(entry["enabled"])
+                overrides[str(Path(entry["path"]).expanduser())] = bool(
+                    entry["enabled"]
+                )
     return overrides
 
 
@@ -93,7 +97,9 @@ def scan_skills(
     root_path = Path(project_root) if project_root else None
     project_dirs = _dirs_cwd_up_to_root(cwd, root_path)
 
-    def add_entries(base_dirs: list[Path], scope: str, subdir_names: tuple[str, ...]) -> None:
+    def add_entries(
+        base_dirs: list[Path], scope: str, subdir_names: tuple[str, ...]
+    ) -> None:
         for d in base_dirs:
             for subdir_name in subdir_names:
                 target_dir = d / subdir_name
@@ -103,23 +109,48 @@ def scan_skills(
                     parse_error = None
                     try:
                         text = skill_md.read_text(encoding="utf-8")
-                    except OSError as exc:
+                    except (OSError, UnicodeError) as exc:
                         parse_error = f"读取失败: {exc}"
                     name = desc = None
                     if text:
                         name, desc, fm_err = _parse_frontmatter(text)
                         parse_error = parse_error or fm_err
+                    if parse_error and parse_error.startswith("读取失败"):
+                        token_count, token_encoding, token_method = (
+                            None,
+                            None,
+                            "unavailable",
+                        )
+                    else:
+                        token_count, token_encoding, token_method = (
+                            estimate_text_tokens(text)
+                        )
                     key = str(skill_md.expanduser())
                     enabled = overrides.get(key, True)
-                    disabled_reason = "被 ~/.codex/config.toml 的 skills.config 显式禁用" if not enabled else None
-                    result.append(SkillEntry(
-                        name=name, description=desc, path=key, scope=scope,
-                        enabled=enabled, disabled_reason=disabled_reason,
-                        parse_error=parse_error,
-                    ))
+                    disabled_reason = (
+                        "被 ~/.codex/config.toml 的 skills.config 显式禁用"
+                        if not enabled
+                        else None
+                    )
+                    result.append(
+                        SkillEntry(
+                            name=name,
+                            description=desc,
+                            path=key,
+                            scope=scope,
+                            enabled=enabled,
+                            disabled_reason=disabled_reason,
+                            parse_error=parse_error,
+                            token_count=token_count,
+                            token_encoding=token_encoding,
+                            token_method=token_method,
+                        )
+                    )
 
     # 越靠近 cwd 优先级越高,所以放在列表前面
-    add_entries(project_dirs, scope="project", subdir_names=(".agents/skills", ".codex/skills"))
+    add_entries(
+        project_dirs, scope="project", subdir_names=(".agents/skills", ".codex/skills")
+    )
     # 全局 skill 目录是 $CODEX_HOME/skills 本身,不是 $CODEX_HOME/.codex/skills
     add_entries([codex_home], scope="global", subdir_names=("skills",))
 

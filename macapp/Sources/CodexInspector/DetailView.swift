@@ -16,6 +16,7 @@ struct DetailView: View {
     private var skills: [[String: Any]] { proc.dictArray("skills") }
     private var mcpServers: [[String: Any]] { proc.dictArray("mcp_servers") }
     private var warnings: [String] { proc.stringArray("warnings") }
+    private var trust: TrustPresentation { trustPresentation(for: proc) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -27,9 +28,10 @@ struct DetailView: View {
                 Text("PID \(proc.int("pid") ?? 0)")
                     .font(.headline)
                 Spacer()
-                Text(trustLabel(proc.str("trust_level")))
+                Text(trust.label)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(trustColor(proc.str("trust_level")))
+                    .foregroundColor(trust.color)
+                    .help(trust.explanation)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -87,8 +89,9 @@ struct DetailView: View {
             if let projectRoot = proc.str("project_root") {
                 row("项目根", shortenPath(projectRoot), mono: true, revealPath: projectRoot)
             } else {
-                row("项目根", "(不在 git 仓库内)", mono: true)
+                row("项目根", "(未识别到 Git 项目)", mono: true)
             }
+            row("信任状态说明", trust.explanation)
 
             if let line = cliOverridesLine {
                 row("CLI 覆盖", line, mono: true)
@@ -185,6 +188,10 @@ struct DetailView: View {
                         Text(enabled ? "启用" : "禁用\(s.str("disabled_reason").map { "(\($0))" } ?? "")")
                             .font(.system(size: 10))
                             .foregroundColor(enabled ? .green : .red)
+                        if let count = s.int("token_count") {
+                            Text("≈ \(count.formatted()) tokens")
+                                .font(.system(size: 10)).foregroundColor(.blue)
+                        }
                     }
                     if let desc = s.str("description"), !desc.isEmpty {
                         Text(desc).font(.system(size: 10)).foregroundColor(.secondary)

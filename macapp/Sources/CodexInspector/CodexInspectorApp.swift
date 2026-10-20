@@ -5,6 +5,12 @@ struct CodexInspectorApp: App {
     @StateObject private var fetcher = ReportFetcher(interval: 3.0)
 
     var body: some Scene {
+        Window("Codex Inspector", id: "inspector") {
+            InspectorWindowView(fetcher: fetcher)
+        }
+        .defaultSize(width: 1160, height: 780)
+        .windowResizability(.contentMinSize)
+
         MenuBarExtra {
             MenuContentView(fetcher: fetcher)
         } label: {

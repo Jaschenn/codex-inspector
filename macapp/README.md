@@ -1,14 +1,69 @@
-# CodexInspector.app (菜单栏版)
+# CodexInspector.app（应用窗口与菜单栏）
 
-用 SwiftUI `MenuBarExtra` 写的原生菜单栏 App,顶部菜单栏图标实时显示当前机器上正在运行的
-`codex` 进程数,点击展开可以看每个进程的 cwd / trust / 配置层 / AGENTS.md / Skills / MCP /
-警告——内容和 `python3 -m codex_inspector` 命令行版完全一致,因为它就是每隔 3 秒在后台跑一次
-`python3 -m codex_inspector --json`,解析 JSON 渲染出来的,没有重新实现探测逻辑。
+原生 SwiftUI 应用，启动后显示可调整大小的主窗口，并保留菜单栏快捷入口。
+左侧选择正在运行的进程和检查分类，右侧展示进程概览、配置层、AGENTS.md、Skills、MCP、
+合并配置与诊断提示。两个入口共享同一份探测结果，每 3 秒自动刷新。
+
+### 聊天与轮次检查
+
+主窗口默认显示本地聊天记录，支持按聊天标题或项目目录搜索，并可包含归档聊天。
+默认优先显示来源可识别的桌面和 CLI 聊天；其他客户端、自动任务或未标记来源的记录可在筛选中开启。
+选择聊天后默认跟随最新轮次，也可以固定查看任意历史轮次；刷新不会改变手动选择。
+工作目录优先来自该轮次的 `turn_context.cwd`，缺失时会明确标注会话元数据回退。
+配置、Skills 和 AGENTS.md 按此目录自动扫描，无需手动选择项目；进程视图仍可从左上角切换。
+
+AGENTS.md 页面区分「磁盘当前指令文件」和「会话记录中的指令文本」：前者可浏览编辑，
+后者只读。日志里的指令可能由用户或宿主注入，不能据此自动判定某个文件被加载，
+也不能证明某次模型请求仍包含其原文。项目尚无 AGENTS.md 时可打开创建草稿，明确保存才写入。
+历史轮次使用其记录的目录检查磁盘当前文件，不还原历史文件版本或当时的完整生效配置。
+
+聊天目录从 Codex 状态数据库只读查询，数据库不可用时退回会话文件索引；只展示本地有记录的聊天。
+日志采用增量解析，索引缓存在 `~/Library/Caches/CodexInspector/`，不修改 Codex 数据库和日志。
+
+### 每轮用量与耗时
+
+「轮次概览」展示本轮 Token 总量、输入、输出、缓存命中/写入与推理输出。
+优先采用 `token_usage_record.turn_token_usage`，响应记录按 ID 去重，旧格式在有完整基线时
+使用 `token_count` 的累计差值。字段不足或累计计数回退时显示不可用，不将缺失记录当成零。
+这是日志报告的多次模型调用合计，输入可能重复包含上下文；缓存计数已包含在输入，推理计数已包含在输出。
+
+耗时使用横向时间线展示首 Token 前等待、推理事件、回复输出、命令执行/等待、工具调用/等待返回、
+活动重叠与未分类时间，悬停可查看起止时间和耗时。包装调用不与内部命令重复计时，
+不同活动的重叠区间只计算一次；分类总和等于整条时间线的时长。
+总耗时优先采用日志的 `duration_ms`，否则采用起止时间差；未结束轮次只展示已记录区间。
+普通日志不能完整区分模型内部思考、网络延迟、服务排队或调度等待，不能把未分类时间认定为思考。
+用户点击发送到执行器接收之间的未记录延迟也无法从本地日志还原。
+悬停「未分类时间」或时间线中的灰色段可查看可能原因。缓存命中与缓存写入显示占输入 Token 的百分比，
+推理输出显示占输出 Token 的百分比；分母缺失、为零或计数不一致时显示「—」。
+
+用户消息和回复预览使用原生 Markdown 渲染，支持标题、强调、列表、引用、GFM 表格、链接和高亮代码块。
+图片展示为可点击链接，不自动请求外部资源；HTML 内容按文本显示。
+
+主窗口默认尺寸为 1160 × 780，支持搜索 Skills、MCP 和指令文件、选择复制文本、在 Finder 中
+定位文件。刷新保持当前 PID 选择；原进程退出后自动选择其他可用进程。
+
+### 文件浏览与编辑
+
+配置层、AGENTS.md、Skill 等文件路径旁的「浏览 / 编辑」按钮可打开内置编辑器；也可以用
+工具栏「打开文件」或 `⌘O` 选择本地文件。默认先浏览，切换到编辑后再明确保存。
+支持 TOML、JSON、Markdown、Shell 等语法高亮、行号、查找替换、撤销重做、自动缩进、
+自动换行和字体缩放。`⌘S` 保存，`⌘F` 查找；JSON、JSONL、TOML 保存前会检查语法。
+外部修改会阻止覆盖，未保存修改关闭时会提示；符号链接及原文件权限会保留。
+当前仅支持不超过 2 MB 的 UTF-8 文本，文件编辑直接作用于磁盘，不代表正在运行的 Codex 会立即重载。
+
+合并配置、MCP 配置和启动命令使用可查找、复制的只读高亮视图，启动参数分行展示。
+
+### Skill Token 估算
+
+每个 Skill 显示 `SKILL.md` 全文的本地 Token 估算，包括 frontmatter，不包括引用文件、
+工具定义和消息包装，也不代表该 Skill 在当前会话中已经加载。使用 OpenAI `tiktoken`
+的 `o200k_base` 编码；这是固定编码下的文本大小估算，并非所有模型的精确请求用量。
+Rust 引擎通过 tiktoken-rs 内嵌公开分词表，构建及运行无需额外下载分词表；初始化失败时明确标为字符粗估。
 
 ## 目录结构
 
 - `Package.swift` / `Sources/CodexInspector/` — SwiftUI 源码
-- `Info.plist` — App 的 bundle 描述(`LSUIElement=true`,不占 Dock)
+- `Info.plist` — App 的 bundle 描述（显示 Dock 图标）
 - `build_app.sh` — 一键打包脚本,产出 `dist/CodexInspector.app`
 
 ## 打包
@@ -18,22 +73,28 @@ cd macapp
 ./build_app.sh
 ```
 
-打包脚本会做三件事:
-1. `swift build -c release` 编译菜单栏 UI
-2. 拷贝一份独立、可重定位的 Python 3.13 运行时(默认用本机 uv 装的那份,约 50MB)进
-   `Contents/Resources/python/`
-3. 拷贝 `../.venv` 里已经装好的 `psutil`/`rich` 和 `../codex_inspector` 源码进
-   `Contents/Resources/pylib/`
+打包脚本编译原生 SwiftUI 界面与 Rust 检查引擎，组装只包含两个可执行文件和许可证的 `.app`，
+完成签名后自动输出 `dist/CodexInspector-macos-arm64.zip`（Intel 为 `x86_64`）及 SHA-256 文件。
+不再复制 Python 运行时、虚拟环境或 Python 源码。TOML 保存前校验也由 Rust 引擎执行。
 
-打完包的 `.app` 是自包含的,不依赖用户机器上是否装了 Python——但因为直接拷贝了当前架构
-(arm64)编译好的 Python 运行时和 C 扩展,只能在同架构的 Mac 上用。换架构/换机器分发,需要
-用 `CODEX_INSPECTOR_PYTHON_RUNTIME` 指定一份对应架构的 python-build-standalone 运行时,
-脚本会在没有可复用 `.venv` 时自动 `pip install psutil rich` 兜底。
+需要 Rust/Cargo 和当前选定的 Xcode 工具链；默认构建本机架构。
+通过 `CODEX_INSPECTOR_ARCH=arm64` 或 `x86_64` 指定目标，需提前安装对应 Rust target。
+SQLite 使用 macOS 系统库，避免依赖本机 Homebrew。
+Release CI 为两个架构各自打包，内含通过 cargo-about 生成的完整依赖许可证。
 
 ## 运行
 
 ```bash
 open dist/CodexInspector.app
+```
+
+主窗口关闭后，也可以点击菜单栏面板顶部的窗口按钮重新打开。`⌘R` 立即刷新。
+
+## 开发校验
+
+```bash
+swift test
+xcrun swift-format lint --strict Sources/CodexInspector/InspectorWindowView.swift Tests/CodexInspectorTests/ProcessSelectionTests.swift Package.swift
 ```
 
 或者直接在 Finder 里双击。首次运行大概率会被 Gatekeeper 拦一下(提示"无法验证开发者",
@@ -48,9 +109,7 @@ open dist/CodexInspector.app
 
 ## 已知限制
 
+- 信任状态根据进程工作目录和全局配置推断。未识别到 Git 项目时显示灰色「未关联 Git 项目」；读取失败或缺少有效信任记录时显示黄色「信任状态未知」，详情会说明原因。App Server 的工作目录可能为 `/`，不能据此判断它服务的各个会话项目。
 - 和 CLI 版一样,靠轮询发现新进程(默认 3 秒一次),不是真正的系统级进程事件订阅。
 - 没有做 Apple 开发者签名/公证,只能在本机或信任来源的情况下运行。
-- 目前把 `merged_config`(合并后的完整配置)原样拿到了,但菜单栏 UI 没有单独展示这一大坨
-  JSON(CLI 版本也没有单独展示,只用它算了"配置层生效数"这类统计);如果你需要在 App 里
-  看完整合并配置,在 `DetailView.swift` 里加一个区块,把 `proc["merged_config"]` pretty-print
-  出来即可。
+- 「合并配置」展示探测器推断的配置，敏感字段按核心规则遮蔽；这不是某次模型调用的请求快照。

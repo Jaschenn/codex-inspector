@@ -9,6 +9,7 @@
 (“A project config that sets only model does not discard your user config's sandbox_mode”)
 保持一致。
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -38,12 +39,27 @@ def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]
 def redact_secrets(value: Any, key_hint: str = "") -> Any:
     """递归地把看起来像密钥/token 的字符串值替换成 ***redacted***,方便安全地分享报告。"""
     if isinstance(value, dict):
+        # 认证头和环境变量可使用任意名称，不能只靠 key/token 等关键词判断。
+        # 隐藏这些容器的值，仍保留字段名称供用户检查配置结构。
+        if key_hint.lower() in {"http_headers", "headers", "env"}:
+            return {k: redact_secret_container(v) for k, v in value.items()}
         return {k: redact_secrets(v, key_hint=k) for k, v in value.items()}
     if isinstance(value, list):
         return [redact_secrets(v, key_hint=key_hint) for v in value]
     if isinstance(value, str) and any(h in key_hint.lower() for h in _SECRET_KEY_HINTS):
         return "***redacted***"
     return value
+
+
+def redact_secret_container(value: Any) -> Any:
+    """遮蔽任意命名的认证值，递归保留配置结构。"""
+    if isinstance(value, dict):
+        return {k: redact_secret_container(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [redact_secret_container(v) for v in value]
+    if value is not None:
+        return "***redacted***"
+    return None
 
 
 def find_git_root(cwd: Path) -> str | None:
@@ -54,11 +70,31 @@ def find_git_root(cwd: Path) -> str | None:
             text=True,
             timeout=5,
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+        if out.returncode == 0 and out.stdout.strip():
+            return out.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    # GUI 启动环境里的 Git 可能不可用；仅通过本地仓库标记回退，不依赖 shell 配置。
+    if not cwd.is_dir():
         return None
-    if out.returncode != 0:
-        return None
-    return out.stdout.strip() or None
+    directory = cwd.resolve()
+    for candidate in (directory, *directory.parents):
+        marker = candidate / ".git"
+        if marker.is_dir() and (marker / "HEAD").is_file():
+            return str(candidate)
+        if marker.is_file():
+            try:
+                with marker.open(encoding="utf-8") as file:
+                    pointer = file.readline(16384).strip()
+                if pointer.startswith("gitdir:"):
+                    git_dir = Path(pointer.removeprefix("gitdir:").strip())
+                    if not git_dir.is_absolute():
+                        git_dir = candidate / git_dir
+                    if (git_dir / "HEAD").is_file():
+                        return str(candidate)
+            except (OSError, UnicodeError):
+                continue
+    return None
 
 
 def _dirs_from_root_to_cwd(root: Path, cwd: Path) -> list[Path]:
@@ -87,21 +123,29 @@ def build_merged_config(
 
     # 1. 系统级(macOS 上基本不存在,但还是尝试一下)
     sys_cfg, sys_err = load_toml(SYSTEM_CONFIG_PATH)
-    layers.append(ConfigLayer(
-        kind="system", path=str(SYSTEM_CONFIG_PATH),
-        exists=SYSTEM_CONFIG_PATH.is_file(), applied=bool(sys_cfg),
-        parse_error=sys_err,
-    ))
+    layers.append(
+        ConfigLayer(
+            kind="system",
+            path=str(SYSTEM_CONFIG_PATH),
+            exists=SYSTEM_CONFIG_PATH.is_file(),
+            applied=bool(sys_cfg),
+            parse_error=sys_err,
+        )
+    )
     merged = deep_merge(merged, sys_cfg)
 
     # 2. 全局
     global_path = codex_home / "config.toml"
     global_cfg, global_err = load_toml(global_path)
-    layers.append(ConfigLayer(
-        kind="global", path=str(global_path),
-        exists=global_path.is_file(), applied=bool(global_cfg),
-        parse_error=global_err,
-    ))
+    layers.append(
+        ConfigLayer(
+            kind="global",
+            path=str(global_path),
+            exists=global_path.is_file(),
+            applied=bool(global_cfg),
+            parse_error=global_err,
+        )
+    )
     merged = deep_merge(merged, global_cfg)
 
     # 3. 项目层(仅 trusted 项目生效)
@@ -116,13 +160,18 @@ def build_merged_config(
         cfg, err = load_toml(layer_path)
         exists = layer_path.is_file()
         applied = project_applied and bool(cfg)
-        layers.append(ConfigLayer(
-            kind="project", path=str(layer_path), exists=exists, applied=applied,
-            skip_reason=None if project_applied else (
-                "项目未标记为 trusted,该层被跳过" if exists else None
-            ),
-            parse_error=err,
-        ))
+        layers.append(
+            ConfigLayer(
+                kind="project",
+                path=str(layer_path),
+                exists=exists,
+                applied=applied,
+                skip_reason=None
+                if project_applied
+                else ("项目未标记为 trusted,该层被跳过" if exists else None),
+                parse_error=err,
+            )
+        )
         if applied:
             merged = deep_merge(merged, cfg)
 
@@ -130,11 +179,15 @@ def build_merged_config(
     if profile:
         profile_path = codex_home / f"{profile}.config.toml"
         prof_cfg, prof_err = load_toml(profile_path)
-        layers.append(ConfigLayer(
-            kind="profile", path=str(profile_path),
-            exists=profile_path.is_file(), applied=bool(prof_cfg),
-            parse_error=prof_err,
-        ))
+        layers.append(
+            ConfigLayer(
+                kind="profile",
+                path=str(profile_path),
+                exists=profile_path.is_file(),
+                applied=bool(prof_cfg),
+                parse_error=prof_err,
+            )
+        )
         merged = deep_merge(merged, prof_cfg)
 
     # 5. CLI -c 覆盖(点号路径,比如 "model" 或 "sandbox_mode")
@@ -149,4 +202,10 @@ def build_merged_config(
         layers.append(ConfigLayer(kind="cli", path=None, exists=True, applied=True))
         merged = deep_merge(merged, cli_dict)
 
-    return merged, layers, (str(root_path) if is_git_repo else None), is_git_repo, trust_level
+    return (
+        merged,
+        layers,
+        (str(root_path) if is_git_repo else None),
+        is_git_repo,
+        trust_level,
+    )

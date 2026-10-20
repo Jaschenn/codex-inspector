@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct MenuContentView: View {
+    @Environment(\.openWindow) private var openWindow
     @ObservedObject var fetcher: ReportFetcher
     @State private var selectedPID: Int? = nil
 
@@ -34,6 +35,14 @@ struct MenuContentView: View {
         HStack {
             Text("codex-inspector").font(.headline)
             Spacer()
+            Button {
+                openWindow(id: "inspector")
+                NSApplication.shared.activate(ignoringOtherApps: true)
+            } label: {
+                Image(systemName: "macwindow")
+            }
+            .buttonStyle(.plain)
+            .help("打开检查窗口")
             if fetcher.isRefreshing {
                 ProgressView().controlSize(.small)
             }
@@ -104,14 +113,15 @@ struct MenuContentView: View {
     private func processRow(_ proc: [String: Any]) -> some View {
         let pid = proc.int("pid") ?? 0
         let cwd = shortenPath(proc.str("cwd"))
-        let trust = proc.str("trust_level")
+        let trust = trustPresentation(for: proc)
         let etime = proc.str("etime") ?? "-"
 
         return Button {
             selectedPID = pid
         } label: {
             HStack(spacing: 8) {
-                Circle().fill(trustColor(trust)).frame(width: 8, height: 8)
+                Circle().fill(trust.color).frame(width: 8, height: 8)
+                    .help(trust.explanation)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("PID \(pid)  ·  运行 \(etime)")
                         .font(.system(size: 12, weight: .medium))

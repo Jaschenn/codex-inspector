@@ -8,6 +8,7 @@ dist/
 *.egg
 
 # Swift / SwiftPM
+rust-core/target/
 macapp/.build/
 macapp/dist/
 .swiftpm/

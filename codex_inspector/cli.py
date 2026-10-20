@@ -3,6 +3,7 @@
 展示层和核心逻辑(core.build_report)彻底分开:这个文件只管"怎么把 dict 打印得好看",
 不包含任何探测/合并逻辑。以后做 macOS App 时,直接复用 core,换掉这一个文件即可。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -23,6 +24,7 @@ try:
     from rich.live import Live
     from rich.columns import Columns
     from rich.text import Text
+
     HAS_RICH = True
 except ModuleNotFoundError:
     HAS_RICH = False
@@ -40,30 +42,41 @@ def _shorten_path(path: str | None) -> str:
     if path == home:
         return "~"
     if path.startswith(home + os.sep):
-        return "~" + path[len(home):]
+        return "~" + path[len(home) :]
     return path
 
 
 TRUST_STYLE = {"trusted": "bold green", "untrusted": "bold red", "unknown": "yellow"}
-TRUST_LABEL = {"trusted": "✅ trusted", "untrusted": "⛔ untrusted", "unknown": "❔ unknown"}
+TRUST_LABEL = {
+    "trusted": "✅ trusted",
+    "untrusted": "⛔ untrusted",
+    "unknown": "❔ unknown",
+}
 
 
 # ---------------------------------------------------------------------------
 # 纯文本渲染(没装 rich 时的兜底)
 # ---------------------------------------------------------------------------
 
+
 def render_plain(report: dict) -> str:
-    lines = [f"生成时间: {report['generated_at']}  |  发现 {report['process_count']} 个 codex 进程"]
+    lines = [
+        f"生成时间: {report['generated_at']}  |  发现 {report['process_count']} 个 codex 进程"
+    ]
     for e in report["process_errors"]:
         lines.append(f"  ⚠ pid={e['pid']} 分析失败: {e['error']}")
 
     for proc in report["processes"]:
         lines.append("")
         lines.append("=" * 78)
-        lines.append(f"PID {proc['pid']}  user={proc['user']}  运行时长={proc['etime']}")
+        lines.append(
+            f"PID {proc['pid']}  user={proc['user']}  运行时长={proc['etime']}"
+        )
         lines.append(f"命令行: {proc['cmdline']}")
         lines.append(f"cwd: {proc['cwd'] or '(未知: ' + str(proc['cwd_error']) + ')'}")
-        lines.append(f"CODEX_HOME: {_shorten_path(proc['codex_home'])}  |  env 读取状态: {proc['env_status']}")
+        lines.append(
+            f"CODEX_HOME: {_shorten_path(proc['codex_home'])}  |  env 读取状态: {proc['env_status']}"
+        )
         co = proc["cli_overrides"]
         if co["profile"] or co["cd"] or co["config_path"] or co["c_overrides"]:
             lines.append(
@@ -89,7 +102,9 @@ def render_plain(report: dict) -> str:
         for s in proc["skills"]:
             flag = "启用" if s["enabled"] else f"禁用({s['disabled_reason']})"
             name = s["name"] or "(未命名/解析失败)"
-            lines.append(f"  - [{s['scope']}] {name}: {flag}  <- {_shorten_path(s['path'])}")
+            lines.append(
+                f"  - [{s['scope']}] {name}: {flag}  <- {_shorten_path(s['path'])}"
+            )
             if s.get("description"):
                 lines.append(f"      {s['description']}")
         lines.append(f"MCP 服务器({len(proc['mcp_servers'])} 个):")
@@ -116,6 +131,7 @@ def render_plain(report: dict) -> str:
 # rich 渲染
 # ---------------------------------------------------------------------------
 
+
 def _build_overview(proc: dict):
     """左右两栏的「一眼看清」概览卡片:左边是身份信息,右边是各项计数。"""
     left = Table(show_header=False, box=None, padding=(0, 1))
@@ -123,12 +139,24 @@ def _build_overview(proc: dict):
     left.add_column(overflow="fold")
     left.add_row("命令行", proc["cmdline"])
     left.add_row("用户 / 运行时长", f"{proc['user']} / {proc['etime']}")
-    left.add_row("cwd", _shorten_path(proc["cwd"]) if proc["cwd"] else f"[red]未知: {proc['cwd_error']}[/red]")
+    left.add_row(
+        "cwd",
+        _shorten_path(proc["cwd"])
+        if proc["cwd"]
+        else f"[red]未知: {proc['cwd_error']}[/red]",
+    )
     left.add_row("CODEX_HOME", _shorten_path(proc["codex_home"]))
-    left.add_row("项目根", _shorten_path(proc["project_root"]) if proc["project_root"] else "(不在 git 仓库内)")
+    left.add_row(
+        "项目根",
+        _shorten_path(proc["project_root"])
+        if proc["project_root"]
+        else "(不在 git 仓库内)",
+    )
     trust = proc["trust_level"]
     trust_style = TRUST_STYLE.get(trust, "")
-    left.add_row("Trust", f"[{trust_style}]{TRUST_LABEL.get(trust, trust)}[/{trust_style}]")
+    left.add_row(
+        "Trust", f"[{trust_style}]{TRUST_LABEL.get(trust, trust)}[/{trust_style}]"
+    )
 
     co = proc["cli_overrides"]
     if co["profile"] or co["cd"] or co["config_path"] or co["c_overrides"]:
@@ -154,7 +182,9 @@ def _build_overview(proc: dict):
     right.add_row("Skills", f"{skills_enabled} 启用 / {len(proc['skills'])} 总数")
     right.add_row("MCP servers", f"{len(proc['mcp_servers'])} 个")
     if proc["warnings"]:
-        right.add_row("[yellow]警告[/yellow]", f"[yellow]{len(proc['warnings'])} 条[/yellow]")
+        right.add_row(
+            "[yellow]警告[/yellow]", f"[yellow]{len(proc['warnings'])} 条[/yellow]"
+        )
     else:
         right.add_row("警告", "无")
 
@@ -179,8 +209,11 @@ def _build_config_layers_table(proc: dict):
         else:
             row_style = None
         t.add_row(
-            layer["kind"], _fmt_bool(layer["exists"]), _fmt_bool(layer["applied"]),
-            _shorten_path(layer["path"]) if layer["path"] else "(CLI 覆盖)", note,
+            layer["kind"],
+            _fmt_bool(layer["exists"]),
+            _fmt_bool(layer["applied"]),
+            _shorten_path(layer["path"]) if layer["path"] else "(CLI 覆盖)",
+            note,
             style=row_style,
         )
     return t
@@ -191,9 +224,12 @@ def _build_agents_panel(proc: dict):
         text = "[dim](没有找到 AGENTS.md,当前进程没有额外的项目指令)[/dim]"
     else:
         text = "\n".join(
-            f"[cyan]\\[{d['scope']}][/cyan] {_shorten_path(d['path'])}" for d in proc["agents_chain"]
+            f"[cyan]\\[{d['scope']}][/cyan] {_shorten_path(d['path'])}"
+            for d in proc["agents_chain"]
         )
-    return Panel(text, title=f"AGENTS.md 链 ({len(proc['agents_chain'])})", border_style="blue")
+    return Panel(
+        text, title=f"AGENTS.md 链 ({len(proc['agents_chain'])})", border_style="blue"
+    )
 
 
 def _build_skills_table(proc: dict):
@@ -231,7 +267,11 @@ def _build_mcp_table(proc: dict):
             scope_bits.append(f"[red]禁用: {raw['disabled_tools']}[/red]")
         if raw.get("default_tools_approval_mode"):
             scope_bits.append(f"approval={raw['default_tools_approval_mode']}")
-        t.add_row(m["name"], detail, "\n".join(scope_bits) or "[dim](全部工具, 默认审批)[/dim]")
+        t.add_row(
+            m["name"],
+            detail,
+            "\n".join(scope_bits) or "[dim](全部工具, 默认审批)[/dim]",
+        )
     return t
 
 
@@ -268,8 +308,10 @@ def build_process_panel(proc: dict):
 
 
 def build_rich_group(report: dict):
-    renderables = [f"[bold]codex-inspector[/bold]  {report['generated_at']}  ·  "
-                   f"发现 [bold]{report['process_count']}[/bold] 个正在运行的 codex 进程"]
+    renderables = [
+        f"[bold]codex-inspector[/bold]  {report['generated_at']}  ·  "
+        f"发现 [bold]{report['process_count']}[/bold] 个正在运行的 codex 进程"
+    ]
 
     for e in report["process_errors"]:
         renderables.append(f"[red]⚠ pid={e['pid']} 分析失败: {e['error']}[/red]")
@@ -284,6 +326,7 @@ def build_rich_group(report: dict):
 # 运行模式
 # ---------------------------------------------------------------------------
 
+
 def _filter_pid(report: dict, pid: int | None) -> dict:
     if pid is None:
         return report
@@ -294,7 +337,16 @@ def _filter_pid(report: dict, pid: int | None) -> dict:
 
 
 def run_once(args: argparse.Namespace) -> None:
-    report = _filter_pid(build_report(), args.pid)
+    report = _filter_pid(
+        build_report(
+            include_sessions=args.sessions,
+            session_id=args.session_id,
+            turn_id=args.turn_id,
+            include_archived=args.include_archived,
+            include_other_sources=args.include_other_sources,
+        ),
+        args.pid,
+    )
 
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=2))
@@ -319,12 +371,18 @@ def _build_process_tabs(procs: list[dict], focus_index: int) -> str:
             bits.append(f"[black on cyan]{label}[/black on cyan]")
         else:
             trust = p["trust_level"]
-            dim_style = "dim" if trust == "trusted" else ("red" if trust == "untrusted" else "yellow")
+            dim_style = (
+                "dim"
+                if trust == "trusted"
+                else ("red" if trust == "untrusted" else "yellow")
+            )
             bits.append(f"[{dim_style}]{label}[/{dim_style}]")
     return " ".join(bits)
 
 
-def _render_focused_view(report: dict, focus_index: int, scroll: int, term_width: int, term_height: int):
+def _render_focused_view(
+    report: dict, focus_index: int, scroll: int, term_width: int, term_height: int
+):
     """把「聚焦单个进程 + 滚动」渲染成一份定长的文本,方便塞进 Live。
 
     返回 (renderable, clamped_scroll, max_scroll, focus_index, jump_targets)。
@@ -355,8 +413,13 @@ def _render_focused_view(report: dict, focus_index: int, scroll: int, term_width
         for key, label, renderable in sections:
             jump_targets[key] = len(body_lines)
             buf = io.StringIO()
-            offscreen = Console(file=buf, width=term_width, force_terminal=True,
-                                 color_system="truecolor", legacy_windows=False)
+            offscreen = Console(
+                file=buf,
+                width=term_width,
+                force_terminal=True,
+                color_system="truecolor",
+                legacy_windows=False,
+            )
             offscreen.rule(f"[bold]\\[{key}] {label}[/bold]", style="grey50")
             offscreen.print(renderable)
             body_lines.extend(buf.getvalue().splitlines())
@@ -383,7 +446,7 @@ def _render_focused_view(report: dict, focus_index: int, scroll: int, term_width
     visible_height = max(3, term_height - (6 if n > 1 else 5))
     max_scroll = max(0, len(body_lines) - visible_height)
     scroll = max(0, min(scroll, max_scroll))
-    window = body_lines[scroll: scroll + visible_height]
+    window = body_lines[scroll : scroll + visible_height]
     content = Text.from_ansi("\n".join(window))
 
     scroll_hint = f"  ·  已滚动 {scroll}/{max_scroll} 行" if max_scroll > 0 else ""
@@ -416,10 +479,18 @@ def run_watch(args: argparse.Namespace) -> None:
     focus_index = 0
     scroll = 0
     last_fetch = 0.0
-    report = {"generated_at": "", "process_count": 0, "processes": [], "process_errors": []}
+    report = {
+        "generated_at": "",
+        "process_count": 0,
+        "processes": [],
+        "process_errors": [],
+    }
 
     try:
-        with keyboard, Live(console=console, refresh_per_second=20, screen=True) as live:
+        with (
+            keyboard,
+            Live(console=console, refresh_per_second=20, screen=True) as live,
+        ):
             while True:
                 now = time.monotonic()
                 if now - last_fetch >= args.interval:
@@ -427,8 +498,14 @@ def run_watch(args: argparse.Namespace) -> None:
                     last_fetch = now
 
                 term_size = shutil.get_terminal_size()
-                view, scroll, max_scroll, focus_index, jump_targets = _render_focused_view(
-                    report, focus_index, scroll, term_size.columns, term_size.lines,
+                view, scroll, max_scroll, focus_index, jump_targets = (
+                    _render_focused_view(
+                        report,
+                        focus_index,
+                        scroll,
+                        term_size.columns,
+                        term_size.lines,
+                    )
                 )
                 live.update(view)
 
@@ -466,8 +543,10 @@ def _run_watch_plain(args: argparse.Namespace) -> None:
             report = _filter_pid(build_report(), args.pid)
             print("\033c", end="")  # 清屏(ANSI)
             print(render_plain(report))
-            print(f"\n(每 {args.interval} 秒刷新一次,Ctrl+C 退出;当前模式不支持按键滚动/切换进程,"
-                  f"如需要请安装 rich 并在真正的终端里运行: pip install rich)")
+            print(
+                f"\n(每 {args.interval} 秒刷新一次,Ctrl+C 退出;当前模式不支持按键滚动/切换进程,"
+                f"如需要请安装 rich 并在真正的终端里运行: pip install rich)"
+            )
             time.sleep(args.interval)
     except KeyboardInterrupt:
         pass
@@ -479,10 +558,31 @@ def main(argv: list[str] | None = None) -> None:
         description="查看当前机器上正在运行的 codex 进程及其生效配置",
     )
     parser.add_argument("--watch", action="store_true", help="常驻监控,定时刷新")
-    parser.add_argument("--interval", type=float, default=2.0, help="刷新间隔秒数(配合 --watch)")
-    parser.add_argument("--json", action="store_true", help="输出原始 JSON,方便接入其他工具/未来的 App")
+    parser.add_argument(
+        "--interval", type=float, default=2.0, help="刷新间隔秒数(配合 --watch)"
+    )
+    parser.add_argument(
+        "--json", action="store_true", help="输出原始 JSON,方便接入其他工具/未来的 App"
+    )
     parser.add_argument("--pid", type=int, default=None, help="只看指定 pid")
-    parser.add_argument("--detail", action="store_true", help="(保留参数,当前默认已展开全部细节)")
+    parser.add_argument(
+        "--detail", action="store_true", help="(保留参数,当前默认已展开全部细节)"
+    )
+    parser.add_argument(
+        "--sessions", action="store_true", help="包含本地聊天列表（只读）"
+    )
+    parser.add_argument(
+        "--session-id", help="检查指定聊天的选择 ID（与 --sessions 一起使用）"
+    )
+    parser.add_argument("--turn-id", help="检查指定轮次，省略时使用最新轮次")
+    parser.add_argument(
+        "--include-archived", action="store_true", help="聊天列表包含归档记录"
+    )
+    parser.add_argument(
+        "--include-other-sources",
+        action="store_true",
+        help="聊天列表包含其他客户端和非交互任务来源",
+    )
     args = parser.parse_args(argv)
 
     if args.watch:

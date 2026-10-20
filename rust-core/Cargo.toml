@@ -1,0 +1,32 @@
+[package]
+name = "codex-inspector-core"
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+description = "Offline native inspection engine for Codex Inspector"
+
+[[bin]]
+name = "codex-inspector-core"
+path = "src/main.rs"
+
+[dependencies]
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+clap = { version = "4", features = ["derive"] }
+libc = "0.2"
+regex = "1"
+rusqlite = "0.38"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+shlex = "1"
+tiktoken-rs = "0.12.1"
+toml = "0.9"
+walkdir = "2"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = "symbols"
+panic = "abort"

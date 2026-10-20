@@ -1,96 +1,85 @@
-# codex-inspector
+# Codex Inspector
 
 [![CI](https://github.com/Jaschenn/codex-inspector/actions/workflows/ci.yml/badge.svg)](https://github.com/Jaschenn/codex-inspector/actions/workflows/ci.yml)
 [![Release](https://github.com/Jaschenn/codex-inspector/actions/workflows/release.yml/badge.svg)](https://github.com/Jaschenn/codex-inspector/actions/workflows/release.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-一个只读的诊断工具:找出当前机器上所有正在运行的 `codex` 进程,并为每一个进程还原出它
-**实际生效**的配置——包括合并后的 `config.toml`、AGENTS.md 指令链、当前可见的 Skills(含
-被禁用的)、以及 MCP 服务器列表。
+macOS 原生检查工具：按进程、聊天和轮次查看 Codex 的配置、AGENTS.md、Skills、MCP、Token 用量与耗时分布。
+支持左右布局的窗口、菜单栏快捷入口、语法高亮文件编辑和 Markdown 消息预览。
 
-设计上把「核心探测/合并逻辑」和「展示层」分开(见 `codex_inspector/core/` 与
-`codex_inspector/cli.py`),核心逻辑只产出一份 JSON 可序列化的 snapshot,不依赖任何终端
-库。这样以后你想做 macOS App,只需要另写一个 UI 层调用 `core.build_report()`,不用重写
-探测逻辑。
+应用由 **SwiftUI 界面 + Rust 检查引擎**组成，分发包不包含 Python、虚拟环境或浏览器运行时。
+原 Python 实现暂留在仓库作为迁移参考，不参与应用构建，也不再生成 Python release 包。
 
-## 安装
+## 安装与构建
 
-```bash
-cd codex-inspector
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
+在 [Releases](https://github.com/Jaschenn/codex-inspector/releases) 下载对应架构的 ZIP：
+Apple Silicon 使用 `arm64`，Intel 使用 `x86_64`。需要 macOS 13 或更高版本。
 
-需要 Python 3.11+(用到内置 `tomllib`)。`rich` 是可选依赖,没装的话会自动降级成纯文本输出。
-
-## 用法
+本地构建需要 Xcode 或兼容的 Command Line Tools、Rust stable 与 Cargo：
 
 ```bash
-# 一次性快照,打印所有正在运行的 codex 进程 + 生效配置
-python3 -m codex_inspector
+# 一键构建、签名并压缩原生应用，无需 uv/Python/pnpm
+macapp/build_app.sh
+open macapp/dist/CodexInspector.app
 
-# 常驻监控 + 键盘交互(默认每 2 秒拉取一次新数据),真正的终端里运行
-python3 -m codex_inspector --watch
-
-# 自定义数据刷新间隔(按键响应不受这个影响,一直是实时的)
-python3 -m codex_inspector --watch --interval 5
-
-# 只看某一个 pid
-python3 -m codex_inspector --pid 12345
-
-# 输出原始 JSON,方便接到别的工具 / 未来的 App 里
-python3 -m codex_inspector --json
+# 独立命令行引擎
+cargo build --release --locked --manifest-path rust-core/Cargo.toml
+rust-core/target/release/codex-inspector-core --json --sessions
+rust-core/target/release/codex-inspector-core --json --pid 12345
+# 使用列表中 id 字段选择聊天；不指定 turn-id 时检查最新轮次
+rust-core/target/release/codex-inspector-core --json --sessions \
+  --session-id '/Users/example/.codex::THREAD_UUID' --turn-id TURN_UUID
+# TOML 编辑校验：读取标准输入，语法错误输出到 stderr 并返回非零退出码
+rust-core/target/release/codex-inspector-core --validate-toml < config.toml
 ```
 
-### `--watch` 模式下的键盘操作
+详细界面与统计说明见 [macapp/README.md](macapp/README.md)。
 
-一次只聚焦显示一个进程,内容按「概览 / 配置层 / AGENTS.md / Skills / MCP / 警告」分成
-带编号的区块,每个区块前面有一条分隔线标出 `[编号] 标题`,底部有一条导航条高亮当前滚动到
-了哪个区块。有多个 codex 进程时,顶部还会出现进程标签栏,当前聚焦的用高亮底色标出。
+## 结构
 
-| 按键 | 作用 |
-|---|---|
-| `↑` / `k` | 向上滚动 |
-| `↓` / `j` | 向下滚动 |
-| `1`-`6` | 直接跳到对应编号的区块(概览/配置层/AGENTS.md/Skills/MCP/警告) |
-| `←` / `h` / `p` | 切换到上一个进程 |
-| `→` / `l` / `n` | 切换到下一个进程 |
-| `g` | 跳到顶部 |
-| `G` | 跳到底部 |
-| `r` | 立即强制刷新(不等 `--interval`) |
-| `q` / `Ctrl+C` | 退出 |
+- `rust-core/src/process.rs`：进程发现、cwd、原生 sysctl 环境变量探测及 CLI 覆盖。
+- `rust-core/src/config.rs`：TOML 递归合并、信任状态、AGENTS/Skills/MCP 扫描和敏感信息遮蔽。
+- `rust-core/src/sessions.rs`：只读 SQLite 聊天目录与增量 JSONL 轮次索引。
+- `rust-core/src/statistics.rs`：响应去重、Token 累计差值与互斥耗时区间。
+- `rust-core/src/tokens.rs`：内嵌 `o200k_base` 分词表，完全离线的 Skill Token 估算。
+- `macapp/`：原生 SwiftUI 窗口、编辑器、Markdown 和打包脚本。
 
-布局上做了几个方便阅读的处理:
-- 家目录路径会显示成 `~/...` 而不是完整绝对路径,省掉一大截视觉噪音
-- 配置层、Skill 用颜色区分状态(绿色=生效/启用,暗灰=存在但被跳过,红色=禁用或解析出错)
-- 概览区块用左右两栏布局,右边是「配置层生效 X/Y、Skills 启用 X/Y、MCP 个数」这类一眼扫到的计数
+默认每 3 秒生成 JSON 快照。日志索引缓存保存到 `~/Library/Caches/CodexInspector/rust-*.json`，
+Skill 分词缓存仅保存文本 SHA-256 和数量，命中时无需重新初始化分词器。缓存文件以 0600 权限创建。
+Rust 缓存与旧 Python 缓存使用不同文件名，首次打开聊天会重建索引。
+不修改 Codex 数据库、日志或配置；文件编辑仅在明确保存后写入。
 
-数据刷新(重新跑一遍探测)按 `--interval` 定时进行,但按键响应是每 50ms 轮询一次,滚动/切换/跳转都是即时的,不会卡在下一次数据刷新上。
+## CI 与发布
 
-如果 stdout 被重定向到文件、或者终端不支持 `termios`(比如某些 Windows 环境),会自动退化成没有交互的定时清屏刷新模式。
+- 推送 `main`、打开 PR 或手动运行 CI：检查 Rust 格式与 Clippy，构建两个架构的应用并上传 artifacts。
+- 推送 `v*.*.*` 标签：分别打包 Apple Silicon/Intel ZIP、Rust CLI 和 SHA-256 文件，成功后创建 GitHub Release。
+- 手动运行 Release：仅生成 artifacts，不创建正式 Release。
+- Cargo.lock 和 Package.resolved 锁定依赖；CI 生成并随包附带 Rust 与 Swift 依赖许可证。
 
-## 它是怎么拿到信息的(以及已知的局限)
+```bash
+cargo fmt --manifest-path rust-core/Cargo.toml --check
+cargo clippy --manifest-path rust-core/Cargo.toml --locked -- -D warnings
+```
 
-| 信息 | 拿法 | 局限 |
-|---|---|---|
-| 有哪些 codex 进程在跑 | `ps -axo pid=,etime=,command=` 过滤出可执行文件名为 `codex` 的行 | 如果你把 codex 包了一层壳脚本改了名字,识别不到;可以在 `core/process_scan.py` 里加白名单 |
-| 进程的 cwd | macOS 下用 `lsof -a -p <pid> -d cwd -Fn` | 需要 `lsof` 有权限读该进程,通常同用户下没问题;沙箱/权限受限的进程可能拿不到 |
-| 进程的环境变量(主要为了拿 `CODEX_HOME`) | 优先 `psutil`,失败则退回 `ps eww -p <pid>` 解析行尾的 `KEY=VALUE` | macOS 的强化运行时(hardened runtime)有时会拒绝读取其他进程的完整环境,即使是同一用户;拿不到时会标记为「未知」而不是瞎猜 |
-| CLI 覆盖(`-c key=value`、`--profile`、`--cd`) | 直接从 `ps` 拿到的完整命令行里 shlex 解析 | 如果命令行被截断(极长参数在某些系统上会被截断显示),解析可能不全 |
-| 项目是否 trusted | 读全局 `~/.codex/config.toml` 里的 `[projects."<abs-path>"]` → `trust_level` | 官方目前把这块存在全局 config 里(见 openai/codex#15433 的讨论,未来可能拆分出去);工具按当前已知格式解析,如果 OpenAI 改了存储位置需要更新这一小块 |
-| 生效配置合并 | 按官方文档优先级手工实现 TOML 深度 merge:CLI `-c` > profile 文件 > 项目 `.codex/config.toml`(仓库根到 cwd,越近越后覆盖,仅 trusted 项目)> 全局 `~/.codex/config.toml` > 内置默认值 | 系统级 `/etc/codex/config.toml` 在 macOS 上极少见,工具会尝试读取但通常不存在;`requirements.toml` 强制约束未处理 |
-| Skills | 从 cwd 向上扫到 git 仓库根,每层找 `.agents/skills/` 和 `.codex/skills/`,加上全局 `~/.codex/skills/`;再套用合并配置里 `[[skills.config]]` 的 enable/disable 覆盖 | 不会向下扫描子目录(和官方行为一致);同名 skill 不合并,按你之前问过的规则原样列出 |
-| MCP 服务器 | 从合并后配置的 `[mcp_servers.*]` 读取,附带 `enabled_tools` / `disabled_tools` / `default_tools_approval_mode` | 不会主动连接 MCP 服务器验证是否真的能连上,只反映配置层面「应该启用什么」 |
-| AGENTS.md 指令链 | 全局 `~/.codex/AGENTS.override.md`(或 `AGENTS.md`)+ 项目根到 cwd 逐层的 `AGENTS.override.md`/`AGENTS.md` | 自定义 `project_doc_fallback_filenames` 暂未支持,先按默认文件名扫描 |
+按本次要求，迁移交付不运行测试套件；工作流目前执行静态检查、编译与打包，未添加自动测试步骤。
+使用 ad-hoc 签名，尚未配置 Developer ID 或 Apple 公证。首次打开可能需要在系统设置的隐私与安全性中允许打开。
 
-## macOS 菜单栏 App
+## 数据含义与限制
 
-`codex_inspector/core/report.py` 里的 `build_report()` 返回一份可以直接 `json.dumps`
-的 dict,[`macapp/`](macapp) 是基于这份核心逻辑写的 SwiftUI 菜单栏 App:顶部菜单栏图标
-实时显示当前正在跑的 codex 进程数,点开能看每个进程的概览/配置层/AGENTS.md/Skills/MCP/
-警告——原理是每隔几秒在后台跑一次 `python3 -m codex_inspector --json` 并解析结果,没有
-重新实现探测逻辑。详见 [macapp/README.md](macapp/README.md)。
+配置结果是根据当前磁盘文件和日志工作目录重建的推断，无法覆盖 Codex 内置默认值、
+`requirements.toml` 的所有约束或历史配置快照。项目配置仅在全局记录为 trusted 时合并。
+默认 AGENTS 文件名优先 `AGENTS.override.md`，其次 `AGENTS.md`，暂不处理自定义 fallback 文件名。
+Skills 扫描当前目录到 Git 根的 `.agents/skills`、`.codex/skills` 和 `$CODEX_HOME/skills`；
+同名条目保留，不向下扫描项目。MCP 列表反映配置声明，探测器不主动连接服务器。
 
-打包好的 `.app`(自包含,免装 Python)可以在 [Releases](../../releases) 页面直接下载,
-也可以本地跑 `macapp/build_app.sh` 自己打包。
+Skill Token 使用固定 `o200k_base` 编码，统计 **SKILL.md 全文（含 frontmatter）**，
+不包含引用资源、消息包装或工具定义，也不证明该 Skill 已进入模型请求。
+分词器初始化失败时明确标为字符粗估，文件读取失败则为不可用。
+
+每轮 Token 优先使用日志 turn 统计，其次响应统计或可靠基线的旧累计差值。
+缺少字段不当作零，独立子线程用量不归入父轮次。耗时重叠区间只计一次；
+未分类时间可能包含模型内部思考、网络延迟、服务器排队、调度等待和日志缺口，不能精确拆分。
+普通 JSONL 的消息/指令记录不等于每次 LLM 请求的完整 payload。
+
+进程发现依赖 macOS `ps`/`lsof` 和权限；无法读取时明确提示。
+`ps` 的命令行引号/截断可能影响 CLI 覆盖解析，环境变量读取失败会退回标注为不完整的 `ps eww`。
+历史轮次目录用于检查当前文件，不还原旧版本。敏感字段、任意命名的 HTTP header 与 env 值均会遮蔽。

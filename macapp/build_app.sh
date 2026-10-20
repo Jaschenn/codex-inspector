@@ -1,94 +1,87 @@
 #!/bin/bash
-# 把 SwiftUI 菜单栏源码 + codex_inspector Python 核心 打包成一个自包含、可双击运行的
-# CodexInspector.app,不依赖用户机器上装没装 Python / psutil。
-#
-# 用法:
-#   ./build_app.sh
-#
-# 可选环境变量:
-#   CODEX_INSPECTOR_PYTHON_RUNTIME  指向一份 python-build-standalone 风格的、
-#                                   可重定位的 CPython 3.13 安装目录(即 bin/python3.13
-#                                   通过 @executable_path 相对路径找库,不依赖固定绝对路径)。
-#                                   不指定的话,自动用 `uv` 定位/安装一份(本机和 CI 都适用)。
+# Build the native SwiftUI app and Rust engine. No Python, virtualenv or runtime downloads.
 set -euo pipefail
-
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$ROOT_DIR/.." && pwd)"
-APP_NAME="CodexInspector"
+APP_NAME=CodexInspector
 APP_BUNDLE="$ROOT_DIR/dist/$APP_NAME.app"
-VENV_SITE_PACKAGES="$PROJECT_ROOT/.venv/lib/python3.13/site-packages"
+STAGING="$ROOT_DIR/dist/.${APP_NAME}-staging-$$.app"
+ARCH="${CODEX_INSPECTOR_ARCH:-$(uname -m)}"
+case "$ARCH" in
+  arm64) RUST_TARGET=aarch64-apple-darwin ;;
+  x86_64) RUST_TARGET=x86_64-apple-darwin ;;
+  *) echo "Unsupported architecture: $ARCH" >&2; exit 1 ;;
+esac
+trap 'rm -rf "$STAGING"' EXIT
 
-if [ -z "${CODEX_INSPECTOR_PYTHON_RUNTIME:-}" ] && command -v uv >/dev/null 2>&1; then
-  echo "==> 0/6 未指定 CODEX_INSPECTOR_PYTHON_RUNTIME,用 uv 定位/安装可重定位的 CPython 3.13"
-  uv python install 3.13 >/dev/null 2>&1 || true
-  UV_PY_BIN="$(uv python find 3.13 2>/dev/null || true)"
-  if [ -n "$UV_PY_BIN" ]; then
-    UV_PY_BIN="$(realpath "$UV_PY_BIN")"
-    CODEX_INSPECTOR_PYTHON_RUNTIME="$(cd "$(dirname "$UV_PY_BIN")/.." && pwd)"
-  fi
-fi
-PYTHON_RUNTIME_SRC="${CODEX_INSPECTOR_PYTHON_RUNTIME:-$HOME/.local/share/uv/python/cpython-3.13.5-macos-aarch64-none}"
-
-echo "==> 1/6 编译 Swift 可执行文件 (release)"
-# 优先用 Command Line Tools 自带的 swift 工具链构建,不依赖系统级 `xcode-select` 指向哪里
-# (完整 Xcode.app 首次使用需要 `sudo xcodebuild -license` 同意许可协议,这里绕开它)。
-if [ -x /Library/Developer/CommandLineTools/usr/bin/swift ]; then
+if ! xcrun --find swift >/dev/null 2>&1 && [ -x /Library/Developer/CommandLineTools/usr/bin/swift ]; then
   export DEVELOPER_DIR=/Library/Developer/CommandLineTools
 fi
-swift build -c release --package-path "$ROOT_DIR"
+export MACOSX_DEPLOYMENT_TARGET=13.0
+# Force system SQLite; never accidentally ship a dependency on a local Homebrew dylib.
+SDK_PATH="$(xcrun --sdk macosx --show-sdk-path)"
+export SQLITE3_LIB_DIR="$SDK_PATH/usr/lib"
+export SQLITE3_INCLUDE_DIR="$SDK_PATH/usr/include"
+export SQLITE3_STATIC=0
+export SQLITE3_NO_PKG_CONFIG=1
+export LIBSQLITE3_SYS_USE_PKG_CONFIG=0
 
-echo "==> 2/6 组装 .app bundle 骨架"
-rm -rf "$APP_BUNDLE"
-mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
-cp "$ROOT_DIR/.build/release/$APP_NAME" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
-cp "$ROOT_DIR/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
+echo "==> Build Rust engine ($ARCH)"
+cargo build --release --locked --manifest-path "$PROJECT_ROOT/rust-core/Cargo.toml" --target "$RUST_TARGET"
+CARGO_OUTPUT="${CARGO_TARGET_DIR:-$PROJECT_ROOT/rust-core/target}"
+if [[ "$CARGO_OUTPUT" != /* ]]; then CARGO_OUTPUT="$PROJECT_ROOT/$CARGO_OUTPUT"; fi
+RUST_BINARY="$CARGO_OUTPUT/$RUST_TARGET/release/codex-inspector-core"
 
-echo "==> 3/6 拷贝独立 Python 运行时 (可重定位,约 50MB): $PYTHON_RUNTIME_SRC"
-if [ ! -d "$PYTHON_RUNTIME_SRC" ]; then
-  echo "错误: 找不到 Python 运行时目录: $PYTHON_RUNTIME_SRC"
-  echo "请通过 CODEX_INSPECTOR_PYTHON_RUNTIME 指定一份 python-build-standalone 安装目录"
-  exit 1
+echo "==> Build native SwiftUI interface ($ARCH)"
+swift build -c release --arch "$ARCH" --package-path "$ROOT_DIR" --only-use-versions-from-resolved-file
+SWIFT_OUTPUT="$(swift build -c release --arch "$ARCH" --package-path "$ROOT_DIR" --show-bin-path)"
+
+echo "==> Assemble app"
+mkdir -p "$STAGING/Contents/MacOS" "$STAGING/Contents/Resources/licenses"
+cp "$SWIFT_OUTPUT/$APP_NAME" "$STAGING/Contents/MacOS/$APP_NAME"
+cp "$RUST_BINARY" "$STAGING/Contents/MacOS/codex-inspector-core"
+cp "$ROOT_DIR/Info.plist" "$STAGING/Contents/Info.plist"
+if [ -n "${CODEX_INSPECTOR_VERSION:-}" ]; then
+  /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $CODEX_INSPECTOR_VERSION" "$STAGING/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $CODEX_INSPECTOR_VERSION" "$STAGING/Contents/Info.plist"
 fi
-mkdir -p "$APP_BUNDLE/Contents/Resources/python"
-cp -R "$PYTHON_RUNTIME_SRC"/. "$APP_BUNDLE/Contents/Resources/python/"
-
-echo "==> 4/6 安装 Python 依赖 (psutil / rich)"
-mkdir -p "$APP_BUNDLE/Contents/Resources/pylib"
-if [ -d "$VENV_SITE_PACKAGES" ]; then
-  echo "    复用现有 .venv 的依赖 (免联网,ABI 已确认匹配)"
-  cp -R "$VENV_SITE_PACKAGES"/. "$APP_BUNDLE/Contents/Resources/pylib/"
-else
-  echo "    .venv 不存在,通过 pip 联网安装"
-  "$APP_BUNDLE/Contents/Resources/python/bin/python3.13" -m pip install --quiet psutil rich \
-    --target "$APP_BUNDLE/Contents/Resources/pylib"
+cp "$PROJECT_ROOT/LICENSE" "$STAGING/Contents/Resources/licenses/CodexInspector-LICENSE"
+cp "$PROJECT_ROOT/rust-core/THIRD_PARTY_NOTICES.md" "$STAGING/Contents/Resources/licenses/THIRD_PARTY_NOTICES.md"
+# Generate complete notices from the exact locked dependencies using cargo-about (build-time only).
+# Local builds may use the checked-in notices; release CI requires the full generated license document.
+if command -v cargo-about >/dev/null 2>&1; then
+  cargo about generate --manifest-path "$PROJECT_ROOT/rust-core/Cargo.toml" \
+    --locked --target "$RUST_TARGET" \
+    "$PROJECT_ROOT/rust-core/about.hbs" --output-file "$STAGING/Contents/Resources/licenses/Rust-dependencies.html"
+elif [ "${CI:-}" = true ]; then
+  echo "CI requires cargo-about to generate dependency licenses" >&2; exit 1
 fi
+for dependency in "$ROOT_DIR"/.build/checkouts/*; do
+  [ -d "$dependency" ] || continue
+  for license_file in LICENSE LICENSE.txt COPYING; do
+    if [ -f "$dependency/$license_file" ]; then
+      cp "$dependency/$license_file" "$STAGING/Contents/Resources/licenses/$(basename "$dependency")-$license_file"
+    fi
+  done
+done
 
-echo "==> 5/6 拷贝 codex_inspector 核心逻辑源码"
-rm -rf "$APP_BUNDLE/Contents/Resources/pylib/codex_inspector"
-cp -R "$PROJECT_ROOT/codex_inspector" "$APP_BUNDLE/Contents/Resources/pylib/"
-find "$APP_BUNDLE/Contents/Resources/pylib" -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
-
-echo "==> 6/6 给 App 内所有二进制签名"
-# 只有最外层可执行文件会被 swift build 的链接器顺手打上 ad-hoc 签名,内嵌的整份 Python
-# 运行时(几十个 .dylib/.so/可执行文件)完全没有签名。这份 App 一旦经过"从网上下载"
-# (被打上 com.apple.quarantine 标记)会触发比本地直接运行严格得多的完整性校验,
-# 校验会发现"外层签名说 Resources 应该有完整性封印,但实际没有"——直接被判定为
-# "已损坏,应该移到废纸篓",而不是常见的"未验证开发者"提示。
-# 解法是自底向上把每一个二进制都签一遍,最后再签一次整个 .app 封印 Resources。
-# 没有付费 Apple Developer 证书时用 ad-hoc("-"),能解决"已损坏"这个硬性错误;
-# 但 Gatekeeper 仍会提示"未验证开发者"(所有非 Apple 分发的 App 都这样,除非做
-# 付费开发者账号 + notarization),用户右键"打开"确认一次即可,这是正常现象。
+# The only non-system executables are our two binaries. Signing errors must fail packaging.
 SIGN_IDENTITY="${CODEX_INSPECTOR_SIGN_IDENTITY:--}"
-while IFS= read -r -d '' f; do
-  file "$f" | grep -q "Mach-O" && codesign --force --sign "$SIGN_IDENTITY" --timestamp=none "$f" 2>&1 | grep -v "^$f: replacing existing signature" || true
-done < <(find "$APP_BUNDLE" -type f \( -perm -u+x -o -name "*.dylib" -o -name "*.so" \) -print0)
-codesign --force --sign "$SIGN_IDENTITY" --timestamp=none "$APP_BUNDLE"
-
-echo "    校验签名..."
-codesign --verify --deep --strict "$APP_BUNDLE"
-
-echo ""
-echo "完成: $APP_BUNDLE"
-echo "双击运行,或: open '$APP_BUNDLE'"
-echo "首次运行如被 Gatekeeper 拦截(提示"未验证开发者"):右键点击 App -> 打开;"
-echo "如果这一步没反应/没弹确认框,去 系统设置 -> 隐私与安全性 -> 拉到底部点"仍要打开"。"
+for binary in "$STAGING/Contents/MacOS"/*; do
+  codesign --force --sign "$SIGN_IDENTITY" --timestamp=none "$binary"
+done
+codesign --force --sign "$SIGN_IDENTITY" --timestamp=none "$STAGING"
+codesign --verify --deep --strict "$STAGING"
+# Only replace the prior deliverable after the new bundle is complete.
+rm -rf "$APP_BUNDLE"
+mv "$STAGING" "$APP_BUNDLE"
+ZIP_PATH="$ROOT_DIR/dist/$APP_NAME-macos-$ARCH.zip"
+ditto -c -k --sequesterRsrc --keepParent "$APP_BUNDLE" "$ZIP_PATH"
+(cd "$ROOT_DIR/dist" && shasum -a 256 "$(basename "$ZIP_PATH")" > "$(basename "$ZIP_PATH").sha256")
+CLI_ARCHIVE="$ROOT_DIR/dist/codex-inspector-core-macos-$ARCH.tar.gz"
+tar -czf "$CLI_ARCHIVE" -C "$APP_BUNDLE/Contents/MacOS" codex-inspector-core \
+  -C "$APP_BUNDLE/Contents/Resources" licenses
+(cd "$ROOT_DIR/dist" && shasum -a 256 "$(basename "$CLI_ARCHIVE")" > "$(basename "$CLI_ARCHIVE").sha256")
+echo "App: $APP_BUNDLE"
+echo "ZIP: $ZIP_PATH"
+du -sh "$APP_BUNDLE" "$ZIP_PATH"
