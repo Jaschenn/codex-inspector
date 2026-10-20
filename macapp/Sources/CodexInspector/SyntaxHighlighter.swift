@@ -36,6 +36,13 @@ struct SyntaxRule {
 
 enum SyntaxHighlighter {
   static func rules(for language: CodeLanguage) -> [SyntaxRule] {
+    cachedRules[language] ?? []
+  }
+
+  private static let cachedRules = Dictionary(
+    uniqueKeysWithValues: CodeLanguage.allCases.map { ($0, makeRules(for: $0)) })
+
+  private static func makeRules(for language: CodeLanguage) -> [SyntaxRule] {
     var patterns: [(String, NSColor)] = []
     if language != .plain {
       patterns += [
@@ -91,6 +98,45 @@ enum SyntaxHighlighter {
         SyntaxRule(expression: expression, color: .secondaryLabelColor, captureGroup: 1))
     }
     return result
+  }
+
+  struct Matches {
+    let color: NSColor
+    let ranges: [NSRange]
+
+    func intersecting(_ visible: NSRange) -> ArraySlice<NSRange> {
+      var low = 0
+      var high = ranges.count
+      while low < high {
+        let mid = (low + high) / 2
+        if NSMaxRange(ranges[mid]) <= visible.location { low = mid + 1 } else { high = mid }
+      }
+      let start = low
+      while low < ranges.count && ranges[low].location < NSMaxRange(visible) { low += 1 }
+      return ranges[start..<low]
+    }
+  }
+
+  /// Parse away from the main thread; keep multiline matches intact across viewport boundaries.
+  static func matches(
+    in text: String, language: CodeLanguage, cancelled: () -> Bool = { false }
+  ) -> [Matches] {
+    let range = NSRange(location: 0, length: (text as NSString).length)
+    return rules(for: language).map { rule in
+      var ranges: [NSRange] = []
+      rule.expression.enumerateMatches(in: text, options: .reportProgress, range: range) {
+        match, _, stop in
+        if cancelled() {
+          stop.pointee = true
+          return
+        }
+        if let match {
+          let range = match.range(at: rule.captureGroup)
+          if range.location != NSNotFound { ranges.append(range) }
+        }
+      }
+      return Matches(color: rule.color, ranges: ranges)
+    }
   }
 
   static func apply(to storage: NSTextStorage, language: CodeLanguage, font: NSFont) {

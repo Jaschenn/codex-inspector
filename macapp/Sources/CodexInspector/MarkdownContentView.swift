@@ -22,9 +22,11 @@ func markdownInlineText(_ source: String) -> AttributedString {
   return text
 }
 
-struct MarkdownContentView: View {
+struct MarkdownContentView: View, Equatable {
   let source: String
   @Environment(\.openInspectedFile) private var openFile
+
+  static func == (lhs: Self, rhs: Self) -> Bool { lhs.source == rhs.source }
 
   var body: some View {
     MarkdownBlocks(nodes: Array(Document(parsing: source).children), depth: 0)
@@ -89,7 +91,8 @@ private struct MarkdownBlock: View {
           .frame(maxWidth: .infinity, alignment: .leading))
     case let code as Markdown.CodeBlock:
       return AnyView(
-        CodeBlockView(text: code.code, language: codeLanguage(code.language), maxHeight: 340))
+        CodeBlockView(text: code.code, language: codeLanguage(code.language), maxHeight: 340)
+          .equatable())
     case let quote as Markdown.BlockQuote:
       return AnyView(
         HStack(alignment: .top, spacing: 12) {

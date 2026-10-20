@@ -114,14 +114,11 @@ struct MenuContentView: View {
         }
         .labelsHidden().frame(maxWidth: .infinity)
       }
-      Picker("当前对话", selection: $selectedSessionID) {
-        Text("自动跟随最近活动").tag(String?.none)
-        ForEach(candidates.compactMap { $0.str("id") }, id: \.self) { id in
-          Text(candidates.first { $0.str("id") == id }?.str("title") ?? "未命名聊天")
-            .tag(Optional(id))
-        }
-      }
-      .labelsHidden()
+      NativeChoicePicker(
+        title: "当前对话",
+        choices: [PickerChoice(id: nil, title: "自动跟随最近活动")]
+          + candidates.map { PickerChoice(id: $0.str("id"), title: $0.str("title") ?? "未命名聊天") },
+        selection: $selectedSessionID)
       Text(session.str("title") ?? "等待关联聊天")
         .font(.system(size: 14, weight: .semibold)).lineLimit(2)
       Text(shortenPath(session.str("cwd")))
@@ -201,20 +198,7 @@ struct MenuContentView: View {
         }
       }
       if duration > 0, !segments.isEmpty {
-        GeometryReader { geometry in
-          ZStack(alignment: .leading) {
-            ForEach(segments) { segment in
-              Rectangle().fill(segment.category.color)
-                .frame(width: geometry.size.width * segment.duration / duration)
-                .offset(x: geometry.size.width * segment.start / duration)
-                .help(
-                  "\(segment.category.title) · \(formattedDuration(segment.duration))\n\(segment.category.explanation)"
-                )
-            }
-          }
-        }
-        .frame(height: 16).clipShape(RoundedRectangle(cornerRadius: 4))
-        .accessibilityLabel("本轮耗时分布，\(formattedDuration(duration))")
+        NativeTimelineView(segments: segments, duration: duration).frame(height: 16)
         LazyVGrid(
           columns: [
             GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading),

@@ -40,4 +40,4 @@
 Skill 使用 `o200k_base` 估算 `SKILL.md` 全文，包含 frontmatter，不包含引用文件；不代表该 Skill 已进入模型请求。
 历史轮次用于检查当前磁盘内容，不还原历史配置或完整 LLM 请求。
 
-[性能结果与原始证据](../README.md#性能结果) · [下载安装](https://github.com/Jaschenn/codex-inspector/releases/latest)
+[项目说明](../README.md) · [下载安装](https://github.com/Jaschenn/codex-inspector/releases/latest)

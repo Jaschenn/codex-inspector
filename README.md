@@ -3,7 +3,7 @@
 [![CI](https://github.com/Jaschenn/codex-inspector/actions/workflows/ci.yml/badge.svg)](https://github.com/Jaschenn/codex-inspector/actions/workflows/ci.yml)
 [![Release](https://github.com/Jaschenn/codex-inspector/actions/workflows/release.yml/badge.svg)](https://github.com/Jaschenn/codex-inspector/actions/workflows/release.yml)
 
-macOS 原生 Codex 检查工具，采用 SwiftUI + Rust，无 Python 或浏览器运行时。Apple Silicon 应用约 **4.8 MiB**，ZIP 约 **2.6 MiB**。
+macOS 原生 Codex 检查工具，采用 SwiftUI + Rust，无 Python 或浏览器运行时。
 
 ## 功能
 
@@ -12,26 +12,7 @@ macOS 原生 Codex 检查工具，采用 SwiftUI + Rust，无 Python 或浏览�
 - 配置与指令文件支持语法高亮、行号、查找替换及编辑保存。
 - Markdown 消息预览、合并配置高亮、Skill 全文 Token 估算。
 - 文件变更触发更新，每秒兜底检查；支持普通与 Zstandard 压缩日志。
-- 石墨灰应用图标，独立的活动统计窗口。
-
-## 性能结果
-
-Apple M4 / 16 GiB / macOS 27.0.1，2026-10-21 测量；对比 `85a7cff` 与 `6406f3f`，检查样本各 50 次。
-
-| 指标 | 优化前 | 优化后 |
-| --- | ---: | ---: |
-| 暖缓存检查中位数 | 140.26 ms | **6.74 ms（−95.2%）** |
-| 暖缓存检查 P95 | 144.05 ms | **7.37 ms** |
-| 每次检查平均引擎及子进程 CPU 时间 | 91.83 ms | **6.81 ms（−92.6%）** |
-| 暖缓存引擎首次快照中位数 | 141.57 ms | **17.05 ms** |
-| 主窗口 UI RSS 中位数 | 145.71 MiB | 181.36 MiB |
-| 常驻引擎 RSS 中位数 | 临时进程 | 12.59 MiB |
-| 应用体积 | 4.54 MiB | 4.81 MiB |
-| ZIP 体积 | 2.42 MiB | 2.63 MiB |
-
-RSS 为实际窗口采样，非固定日志的内存 A/B；首次快照不代表 App 首帧时间。CPU 不含 UI，新版包含首次启动摊销。内存与包体积未下降。
-
-证据：[耗时与 CPU](docs/performance/2026-10-21-arm64-engine.json) · [旧版内存](docs/performance/2026-10-21-arm64-memory-baseline.json) · [新版内存](docs/performance/2026-10-21-arm64-memory-candidate.json) · [体积](docs/performance/2026-10-21-arm64-package.json) · [测量脚本](scripts/benchmark.py)
+- 独立的活动统计窗口。
 
 ## 安装
 

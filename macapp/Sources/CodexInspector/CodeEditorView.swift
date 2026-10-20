@@ -28,6 +28,10 @@ struct CodeEditorView: NSViewRepresentable {
   func makeCoordinator() -> Coordinator { Coordinator(self) }
 
   func makeNSView(context: Context) -> NSScrollView {
+    makeScrollView(coordinator: context.coordinator)
+  }
+
+  func makeScrollView(coordinator: Coordinator) -> NSScrollView {
     let scroll = EditorScrollView()
     scroll.hasVerticalScroller = true
     scroll.hasHorizontalScroller = !wrapsLines
@@ -47,11 +51,13 @@ struct CodeEditorView: NSViewRepresentable {
     textView.isContinuousSpellCheckingEnabled = false
     textView.textContainerInset = NSSize(width: 12, height: 14)
     textView.backgroundColor = .textBackgroundColor
-    textView.delegate = context.coordinator
+    textView.delegate = coordinator
     textView.minSize = NSSize(width: 0, height: 0)
     textView.maxSize = NSSize(
       width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
     textView.isVerticallyResizable = true
+    textView.layoutManager?.allowsNonContiguousLayout = true
+    textView.layoutManager?.backgroundLayoutEnabled = false
     // The scroll view owns width negotiation, including the ruler; automatic document
     // resizing can re-expand it after AppKit lays out the clip view.
     textView.autoresizingMask = []
@@ -59,41 +65,59 @@ struct CodeEditorView: NSViewRepresentable {
     scroll.verticalRulerView = LineNumberRuler(textView: textView, scrollView: scroll)
     scroll.hasVerticalRuler = true
     scroll.rulersVisible = true
-    context.coordinator.textView = textView
+    coordinator.textView = textView
+    scroll.contentView.postsBoundsChangedNotifications = true
+    NotificationCenter.default.addObserver(
+      coordinator, selector: #selector(Coordinator.viewportChanged),
+      name: NSView.boundsDidChangeNotification, object: scroll.contentView)
     controller?.textView = textView
-    updateNSView(scroll, context: context)
+    updateScrollView(scroll, coordinator: coordinator)
     return scroll
   }
 
   func updateNSView(_ scroll: NSScrollView, context: Context) {
+    updateScrollView(scroll, coordinator: context.coordinator)
+  }
+
+  func updateScrollView(_ scroll: NSScrollView, coordinator: Coordinator) {
     guard let textView = scroll.documentView as? NSTextView else { return }
-    let coordinator = context.coordinator
-    let needsHighlight =
-      textView.string != text || coordinator.language != language
-      || coordinator.fontSize != fontSize
+    let textChanged = coordinator.source != text
+    let syntaxChanged = textChanged || coordinator.language != language
+    let fontChanged = coordinator.fontSize != fontSize
+    let wrapChanged = coordinator.wrapsLines != wrapsLines
     coordinator.parent = self
     coordinator.isUpdating = true
     textView.isEditable = isEditable
-    if textView.string != text {
+    if textChanged {
       let selection = textView.selectedRange()
       textView.string = text
+      coordinator.updateSource(text)
       let length = (text as NSString).length
       textView.setSelectedRange(NSRange(location: min(selection.location, length), length: 0))
     }
-    textView.isHorizontallyResizable = !wrapsLines
-    scroll.hasHorizontalScroller = !wrapsLines
-    textView.textContainer?.widthTracksTextView = wrapsLines
-    textView.textContainer?.containerSize = NSSize(
-      width: wrapsLines
-        ? max(100, scroll.contentView.bounds.width - 24) : CGFloat.greatestFiniteMagnitude,
-      height: CGFloat.greatestFiniteMagnitude)
+    if wrapChanged {
+      textView.isHorizontallyResizable = !wrapsLines
+      scroll.hasHorizontalScroller = !wrapsLines
+      textView.textContainer?.widthTracksTextView = wrapsLines
+      textView.textContainer?.containerSize = NSSize(
+        width: wrapsLines
+          ? max(100, scroll.contentView.bounds.width - 24) : CGFloat.greatestFiniteMagnitude,
+        height: CGFloat.greatestFiniteMagnitude)
+      coordinator.wrapsLines = wrapsLines
+    }
     if let editorScroll = scroll as? EditorScrollView {
       editorScroll.wrapsLines = wrapsLines
       editorScroll.synchronizeTextWidth()
     }
-    if needsHighlight { coordinator.highlight() }
+    if fontChanged {
+      let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+      textView.font = font
+      textView.textColor = .labelColor
+      textView.typingAttributes = [.font: font, .foregroundColor: NSColor.labelColor]
+    }
     coordinator.language = language
     coordinator.fontSize = fontSize
+    if syntaxChanged { coordinator.scheduleHighlight() }
     controller?.textView = textView
     coordinator.isUpdating = false
     scroll.verticalRulerView?.needsDisplay = true
@@ -105,36 +129,115 @@ struct CodeEditorView: NSViewRepresentable {
     var isUpdating = false
     var language: CodeLanguage?
     var fontSize: CGFloat = 0
+    var wrapsLines: Bool?
+    var source = ""
+    var lineIndex = TextLineIndex()
     private var highlightWork: DispatchWorkItem?
+    private var operation: BlockOperation?
+    private var generation = 0
+    private var matches: [SyntaxHighlighter.Matches] = []
+    private var highlightedRange = NSRange(location: 0, length: 0)
+    private static let syntaxQueue: OperationQueue = {
+      let queue = OperationQueue()
+      queue.maxConcurrentOperationCount = 1
+      queue.qualityOfService = .userInitiated
+      return queue
+    }()
 
     init(_ parent: CodeEditorView) { self.parent = parent }
 
+    deinit {
+      highlightWork?.cancel()
+      operation?.cancel()
+      NotificationCenter.default.removeObserver(self)
+    }
+
+    func updateSource(_ text: String) {
+      source = text
+      lineIndex = TextLineIndex(text)
+      (textView?.enclosingScrollView?.verticalRulerView as? LineNumberRuler)?.lineIndex = lineIndex
+    }
+
     func textDidChange(_ notification: Notification) {
       guard !isUpdating, let textView else { return }
-      parent.text = textView.string
+      updateSource(textView.string)
+      parent.text = source
       textView.enclosingScrollView?.verticalRulerView?.needsDisplay = true
-      highlightWork?.cancel()
-      // 短暂合并连续输入，避免每个按键都对整个文件重新高亮。
-      let work = DispatchWorkItem { [weak self] in self?.highlight() }
-      highlightWork = work
-      DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: work)
+      scheduleHighlight(delay: 0.12)
     }
 
     func textViewDidChangeSelection(_ notification: Notification) {
       guard let textView else { return }
-      let prefix = (textView.string as NSString).substring(
-        to: min(textView.selectedRange().location, (textView.string as NSString).length))
-      let parts = prefix.components(separatedBy: "\n")
-      parent.onSelectionChange?(parts.count, (parts.last ?? "").count + 1)
+      let position = min(textView.selectedRange().location, (source as NSString).length)
+      let line = lineIndex.line(at: position)
+      let prefix = (source as NSString).substring(
+        with: NSRange(location: lineIndex.starts[line], length: position - lineIndex.starts[line]))
+      parent.onSelectionChange?(line + 1, prefix.count + 1)
     }
 
-    func highlight() {
-      guard let textView, let storage = textView.textStorage else { return }
-      isUpdating = true
-      let font = NSFont.monospacedSystemFont(ofSize: parent.fontSize, weight: .regular)
-      SyntaxHighlighter.apply(to: storage, language: parent.language, font: font)
-      textView.typingAttributes = [.font: font, .foregroundColor: NSColor.labelColor]
-      isUpdating = false
+    func scheduleHighlight(delay: TimeInterval = 0) {
+      generation += 1
+      let revision = generation
+      highlightWork?.cancel()
+      operation?.cancel()
+      matches = []
+      clearHighlight()
+      let source = source
+      let language = parent.language
+      let work = DispatchWorkItem { [weak self] in
+        guard let self, self.generation == revision else { return }
+        let operation = BlockOperation()
+        operation.addExecutionBlock { [weak self, weak operation] in
+          let result = SyntaxHighlighter.matches(in: source, language: language) {
+            operation?.isCancelled != false
+          }
+          guard operation?.isCancelled == false else { return }
+          DispatchQueue.main.async { [weak self] in
+            guard let self, self.generation == revision else { return }
+            self.matches = result
+            self.highlightViewport()
+          }
+        }
+        self.operation = operation
+        Self.syntaxQueue.addOperation(operation)
+      }
+      highlightWork = work
+      DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    @objc func viewportChanged(_ notification: Notification) {
+      highlightViewport()
+    }
+
+    private func clearHighlight() {
+      guard let textView, let layout = textView.layoutManager else { return }
+      let range = NSIntersectionRange(
+        highlightedRange, NSRange(location: 0, length: (source as NSString).length))
+      layout.removeTemporaryAttribute(.foregroundColor, forCharacterRange: range)
+      highlightedRange = NSRange(location: 0, length: 0)
+    }
+
+    func highlightViewport() {
+      guard !matches.isEmpty, let textView, let layout = textView.layoutManager,
+        let container = textView.textContainer
+      else { return }
+      let rect = textView.visibleRect.offsetBy(
+        dx: -textView.textContainerOrigin.x, dy: -textView.textContainerOrigin.y
+      )
+      .insetBy(dx: 0, dy: -120)
+      let glyphs = layout.glyphRange(forBoundingRect: rect, in: container)
+      let range = layout.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil)
+      guard range != highlightedRange else { return }
+      clearHighlight()
+      // Temporary foreground attributes invalidate drawing only, never glyph layout.
+      for group in matches {
+        for match in group.intersecting(range) {
+          layout.addTemporaryAttribute(
+            .foregroundColor, value: group.color,
+            forCharacterRange: NSIntersectionRange(match, range))
+        }
+      }
+      highlightedRange = range
     }
   }
 }
@@ -163,9 +266,12 @@ private final class EditorScrollView: NSScrollView {
     if textView.frame.width != width {
       textView.setFrameSize(NSSize(width: width, height: textView.frame.height))
     }
-    textView.textContainer?.containerSize = NSSize(
+    let size = NSSize(
       width: max(100, width - textView.textContainerInset.width * 2),
       height: CGFloat.greatestFiniteMagnitude)
+    if textView.textContainer?.containerSize != size {
+      textView.textContainer?.containerSize = size
+    }
   }
 }
 
@@ -190,6 +296,7 @@ private final class IndentedTextView: NSTextView {
 
 private final class LineNumberRuler: NSRulerView {
   weak var textView: NSTextView?
+  var lineIndex = TextLineIndex()
 
   init(textView: NSTextView, scrollView: NSScrollView) {
     self.textView = textView
@@ -208,10 +315,8 @@ private final class LineNumberRuler: NSRulerView {
     let string = textView.string as NSString
     let visible = layout.glyphRange(forBoundingRect: textView.visibleRect, in: container)
     let characters = layout.characterRange(forGlyphRange: visible, actualGlyphRange: nil)
-    var index = string.lineRange(
-      for: NSRange(location: min(characters.location, string.length), length: 0)
-    ).location
-    var number = string.substring(to: index).filter { $0 == "\n" }.count + 1
+    var number = lineIndex.line(at: min(characters.location, string.length))
+    var index = lineIndex.starts[number]
     let attributes: [NSAttributedString.Key: Any] = [
       .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular),
       .foregroundColor: NSColor.secondaryLabelColor,
@@ -222,21 +327,20 @@ private final class LineNumberRuler: NSRulerView {
       let line = layout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
       let position = convert(
         NSPoint(x: 0, y: line.minY + textView.textContainerOrigin.y), from: textView)
-      let label = String(number) as NSString
+      let label = String(number + 1) as NSString
       label.draw(
         at: NSPoint(
           x: ruleThickness - label.size(withAttributes: attributes).width - 10, y: position.y),
         withAttributes: attributes)
-      let next = NSMaxRange(string.lineRange(for: NSRange(location: index, length: 0)))
-      guard next > index else { break }
-      index = next
       number += 1
+      guard number < lineIndex.starts.count else { break }
+      index = lineIndex.starts[number]
     }
-    if string.length == 0 || textView.string.hasSuffix("\n") {
+    if lineIndex.starts.last == string.length && layout.extraLineFragmentRect.height > 0 {
       let finalLine = layout.extraLineFragmentRect
       let position = convert(
         NSPoint(x: 0, y: finalLine.minY + textView.textContainerOrigin.y), from: textView)
-      let label = String(textView.string.filter { $0 == "\n" }.count + 1) as NSString
+      let label = String(lineIndex.starts.count) as NSString
       label.draw(
         at: NSPoint(
           x: ruleThickness - label.size(withAttributes: attributes).width - 10, y: position.y),
@@ -245,12 +349,16 @@ private final class LineNumberRuler: NSRulerView {
   }
 }
 
-struct CodeBlockView: View {
+struct CodeBlockView: View, Equatable {
   let text: String
   let language: CodeLanguage
   var maxHeight: CGFloat = 440
   @State private var wrapsLines = true
   @StateObject private var controller = CodeEditorController()
+
+  static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.text == rhs.text && lhs.language == rhs.language && lhs.maxHeight == rhs.maxHeight
+  }
 
   var body: some View {
     VStack(spacing: 0) {

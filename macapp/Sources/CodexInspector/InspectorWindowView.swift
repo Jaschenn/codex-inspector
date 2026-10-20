@@ -56,12 +56,17 @@ struct InspectorWindowView: View {
   private var section: InspectionSection { selectedSection }
   private var sessions: [[String: Any]] { fetcher.report.dictArray("sessions") }
   private var sessionIDs: [String] { sessions.compactMap { $0.str("id") } }
-  private var filteredSessionIDs: [String] {
+  private var filteredSessions: [SessionListItem] {
     sessions.filter { session in
       objectSearchText.isEmpty
         || [session.str("title"), session.str("cwd")].compactMap { $0 }
           .contains { $0.localizedCaseInsensitiveContains(objectSearchText) }
-    }.compactMap { $0.str("id") }
+    }.compactMap { session in
+      guard let id = session.str("id") else { return nil }
+      return SessionListItem(
+        id: id, title: session.str("title") ?? "未命名聊天",
+        path: session.str("cwd") ?? "", archived: session.bool("archived") == true)
+    }
   }
   private var filteredProcesses: [[String: Any]] {
     processes.filter { process in
@@ -119,8 +124,8 @@ struct InspectorWindowView: View {
           panel.title = "打开配置或指令文件"
           panel.canChooseDirectories = false
           panel.allowsMultipleSelection = false
-          panel.begin { response in
-            if response == .OK, let url = panel.url { selectedFile = InspectedFile(url: url) }
+          panel.begin { [weak panel] response in
+            if response == .OK, let url = panel?.url { selectedFile = InspectedFile(url: url) }
           }
         } label: {
           Label("打开文件", systemImage: "doc.badge.plus")
@@ -233,40 +238,14 @@ struct InspectorWindowView: View {
   }
 
   private var sessionBrowser: some View {
-    List(selection: $selectedSessionID) {
-      ForEach(filteredSessionIDs, id: \.self) { id in
-        if let session = sessions.first(where: { $0.str("id") == id }) {
-          VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .top, spacing: 6) {
-              Text(session.str("title") ?? "未命名聊天")
-                .font(.system(size: 13, weight: .medium)).lineLimit(2)
-              if session.bool("archived") == true {
-                Image(systemName: "archivebox").font(.system(size: 11)).foregroundColor(.secondary)
-                  .help("已归档")
-              }
-            }
-            Text(shortenPath(session.str("cwd")))
-              .font(.system(size: 12)).foregroundColor(.secondary)
-              .lineLimit(1).truncationMode(.middle)
-          }
-          .padding(.vertical, 6)
-          .frame(maxWidth: .infinity, alignment: .leading)
-          .contentShape(Rectangle())
-          .tag(id)
-          .help(session.str("cwd") ?? "未记录工作目录")
-          .accessibilityElement(children: .ignore)
-          .accessibilityLabel("选择聊天：\(session.str("title") ?? "未命名聊天")")
+    NativeSessionList(items: filteredSessions, selection: $selectedSessionID)
+      .overlay {
+        if filteredSessions.isEmpty {
+          objectListEmpty(
+            sessions.isEmpty ? "暂无聊天记录" : "没有匹配的聊天",
+            detail: sessions.isEmpty ? "等待读取本地 Codex 日志。" : "试试其他标题或项目名称。")
         }
       }
-    }
-    .listStyle(.sidebar)
-    .overlay {
-      if filteredSessionIDs.isEmpty {
-        objectListEmpty(
-          sessions.isEmpty ? "暂无聊天记录" : "没有匹配的聊天",
-          detail: sessions.isEmpty ? "等待读取本地 Codex 日志。" : "试试其他标题或项目名称。")
-      }
-    }
   }
 
   private var processBrowser: some View {
@@ -352,18 +331,17 @@ struct InspectorWindowView: View {
               .lineLimit(1).truncationMode(.middle).textSelection(.enabled)
           }
           HStack(spacing: 12) {
-            Picker("轮次", selection: $selectedTurnID) {
-              Text("最新轮次 · 自动跟随").tag(nil as String?)
-              ForEach(
-                Array((sessionDetail?.dictArray("turns") ?? []).reversed().enumerated()),
-                id: \.offset
-              ) { _, turn in
-                Text(
-                  "第 \(turn.int("number") ?? 0) 轮 · \(String((turn.str("user_preview") ?? "无用户消息预览").prefix(38)).replacingOccurrences(of: "\n", with: " "))"
-                )
-                .tag(turn.str("id"))
-              }
-            }
+            NativeChoicePicker(
+              title: "轮次",
+              choices: [PickerChoice(id: nil, title: "最新轮次 · 自动跟随")]
+                + (sessionDetail?.dictArray("turns") ?? []).reversed().map { turn in
+                  PickerChoice(
+                    id: turn.str("id"),
+                    title:
+                      "第 \(turn.int("number") ?? 0) 轮 · \(String((turn.str("user_preview") ?? "无用户消息预览").prefix(38)).replacingOccurrences(of: "\n", with: " "))"
+                  )
+                }, selection: $selectedTurnID
+            )
             .frame(maxWidth: 520).disabled(fetcher.isSessionLoading)
             Spacer(minLength: 0)
           }
@@ -429,7 +407,7 @@ struct InspectorWindowView: View {
 
   private func sessionOverview(_ detail: [String: Any]) -> some View {
     let turn = detail.subDict("selected_turn")
-    return VStack(alignment: .leading, spacing: 16) {
+    return LazyVStack(alignment: .leading, spacing: 16) {
       TurnStatisticsView(statistics: turn.subDict("statistics"))
       InspectionCard(title: "轮次与目录", icon: "clock.arrow.circlepath") {
         HStack(spacing: 12) {
@@ -478,11 +456,13 @@ struct InspectorWindowView: View {
       }
       InspectionCard(title: "用户消息预览", icon: "person.bubble") {
         MarkdownContentView(
-          source: turn.str("user_preview").flatMap { $0.isEmpty ? nil : $0 } ?? "本轮没有可显示的用户文本")
+          source: turn.str("user_preview").flatMap { $0.isEmpty ? nil : $0 } ?? "本轮没有可显示的用户文本"
+        )
+        .equatable()
       }
       if let answer = turn.str("assistant_preview"), !answer.isEmpty {
         InspectionCard(title: "回复预览", icon: "bubble.left") {
-          MarkdownContentView(source: answer)
+          MarkdownContentView(source: answer).equatable()
         }
       }
       if let path = detail.str("rollout_path") {
@@ -496,7 +476,7 @@ struct InspectorWindowView: View {
   }
 
   private func recordedInstructionCards(_ detail: [String: Any]) -> some View {
-    VStack(alignment: .leading, spacing: 16) {
+    LazyVStack(alignment: .leading, spacing: 16) {
       Text("会话记录中的指令文本").font(.headline)
       hint("这是日志中出现过的文本，可能由用户或宿主注入；不把它自动认定为某个磁盘文件，也不保证在后续模型请求中仍保留。")
       let instructions = detail.dictArray("recorded_instructions")
@@ -505,8 +485,9 @@ struct InspectorWindowView: View {
         InspectionCard(title: instruction.str("title") ?? "指令文本", icon: "text.quote") {
           Text("首次出现在第 \(instruction.int("first_turn_number") ?? 0) 轮").font(.caption)
             .foregroundColor(.secondary)
-          DisclosureGroup("查看记录文本") {
+          LazyDisclosure("查看记录文本") {
             CodeBlockView(text: instruction.str("text") ?? "", language: .markdown, maxHeight: 420)
+              .equatable()
           }
           if instruction.bool("truncated") == true { hint("文本过长，仅展示前 128,000 字符。") }
         }
@@ -690,7 +671,7 @@ struct InspectorWindowView: View {
   private func skillCards(_ proc: [String: Any]) -> some View {
     let skills = filtered(
       proc.dictArray("skills"), fields: ["name", "description", "path", "scope"])
-    return VStack(alignment: .leading, spacing: 16) {
+    return LazyVStack(alignment: .leading, spacing: 16) {
       hint("Token 估算统计 SKILL.md 全文（含 frontmatter），不含引用文件和消息包装；不代表当前会话的实际用量。")
       if skills.isEmpty { hint(searchText.isEmpty ? "没有发现 Skills" : "没有匹配的 Skills") }
       ForEach(Array(skills.enumerated()), id: \.offset) { _, skill in
@@ -727,7 +708,7 @@ struct InspectorWindowView: View {
     let servers = proc.dictArray("mcp_servers").filter {
       searchText.isEmpty || jsonText($0).localizedCaseInsensitiveContains(searchText)
     }
-    return VStack(alignment: .leading, spacing: 16) {
+    return LazyVStack(alignment: .leading, spacing: 16) {
       if servers.isEmpty { hint(searchText.isEmpty ? "没有配置 MCP 服务器" : "没有匹配的 MCP 服务器") }
       ForEach(Array(servers.enumerated()), id: \.offset) { _, server in
         InspectionCard(
@@ -741,7 +722,7 @@ struct InspectorWindowView: View {
               label: "启动命令", value: command, path: command.hasPrefix("/") ? command : nil)
           }
           if let url = raw.str("url") { InspectionField(label: "服务地址", value: url) }
-          CodeBlockView(text: jsonText(raw), language: .json, maxHeight: 360)
+          CodeBlockView(text: jsonText(raw), language: .json, maxHeight: 360).equatable()
         }
       }
     }
@@ -750,6 +731,7 @@ struct InspectorWindowView: View {
   private func mergedConfiguration(_ proc: [String: Any]) -> some View {
     InspectionCard(title: "合并配置 · 敏感字段已遮蔽", icon: "curlybraces") {
       CodeBlockView(text: jsonText(proc.subDict("merged_config")), language: .json, maxHeight: 580)
+        .equatable()
     }
   }
 

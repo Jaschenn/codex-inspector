@@ -41,6 +41,10 @@ jobs:
         run: cargo fmt --manifest-path rust-core/Cargo.toml --check
       - name: Rust static checks
         run: cargo clippy --manifest-path rust-core/Cargo.toml --locked --target ${{ matrix.target }} -- -D warnings
+      - name: Rust tests
+        run: cargo test --manifest-path rust-core/Cargo.toml --locked --target ${{ matrix.target }}
+      - name: Swift tests
+        run: swift test --package-path macapp --only-use-versions-from-resolved-file
       - name: Install dependency notice generator
         run: cargo install cargo-about --version 0.9.2 --features cli --locked
       - name: Package native application

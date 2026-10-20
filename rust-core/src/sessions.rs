@@ -13,11 +13,12 @@ use std::{
     io::{BufRead, BufReader, Read, Seek, SeekFrom, Write},
     os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
+    rc::Rc,
     time::{Duration, UNIX_EPOCH},
 };
 use walkdir::WalkDir;
 const LIMIT: usize = 300;
-const CACHE_VERSION: u32 = 2; // Compressed and decoded offsets have different meanings.
+const CACHE_VERSION: u32 = 3; // Rebuild indexes that may contain foreign-thread turns.
 const PREVIEW: usize = 1800;
 const ORIGINATORS: [&str; 5] = [
     "Codex Desktop",
@@ -52,7 +53,7 @@ fn summary(row: &Value, home: &Path) -> Value {
     json!({"id":format!("{}::{id}",home.display()),"thread_id":id,"title":util::truncate(title,500),"cwd":row["cwd"],"codex_home":home,"rollout_path":path,
         "updated_at":row.get("updated_at").unwrap_or(&json!(0)),"archived":row["archived"].as_bool().unwrap_or_else(|| row["archived"].as_i64().unwrap_or(0) != 0),
         "source":row.get("source").unwrap_or(&json!("unknown")),"model":row["model"],
-        "primary_source":row["source"] == "cli" || row["source"] == "vscode" && (row.get("originator").is_none() || ORIGINATORS.contains(&util::text(&row["originator"])))})
+        "primary_source":row["source"] == "cli" || row["source"] == "vscode" && (util::text(&row["originator"]).is_empty() || ORIGINATORS.contains(&util::text(&row["originator"])))})
 }
 fn rollout_path(home: &Path, raw: &str) -> PathBuf {
     let path = home.join(util::expand(raw));
@@ -389,6 +390,13 @@ fn consume(state: &mut State, row: &Value) {
     if !payload.is_object() {
         return;
     }
+    // Filter before changing the active turn, not just when counting tokens:
+    // subsequent records without a turn ID must still belong to this thread.
+    let thread = util::text(&payload["thread_id"]);
+    let own = util::text(&state.metadata["id"]);
+    if !thread.is_empty() && !own.is_empty() && thread != own {
+        return;
+    }
     let kind = util::text(&payload["type"]);
     let row_kind = util::text(&row["type"]);
     let time = row["timestamp"].as_str();
@@ -563,13 +571,16 @@ pub fn write_cache(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     }
     result
 }
-pub fn index(path: &Path) -> Result<State, String> {
-    thread_local! { static INDEXES: RefCell<BTreeMap<PathBuf, State>> = const { RefCell::new(BTreeMap::new()) }; }
+pub fn index(path: &Path) -> Result<Rc<State>, String> {
+    thread_local! { static INDEXES: RefCell<BTreeMap<PathBuf, Rc<State>>> = const { RefCell::new(BTreeMap::new()) }; }
     INDEXES.with(|indexes| {
         let mut indexes = indexes.borrow_mut();
-        let state = index_from(path, indexes.get(path).cloned())?;
+        // Move the cached index into the incremental parser; do not clone every
+        // historical turn and metric twice for each one-second refresh.
+        let previous = indexes.remove(path).map(Rc::unwrap_or_clone);
+        let state = Rc::new(index_from(path, previous)?);
         // Bound memory when the user browses many large historical conversations.
-        if indexes.len() >= 8 && !indexes.contains_key(path) {
+        if indexes.len() >= 2 {
             indexes.clear();
         }
         indexes.insert(path.to_path_buf(), state.clone());
@@ -585,11 +596,15 @@ fn index_from(path: &Path, memory: Option<State>) -> Result<State, String> {
         "rust-{}.json",
         util::hash(path.to_string_lossy().as_bytes())
     ));
+    index_with_cache(path, memory, &cache)
+}
+
+fn index_with_cache(path: &Path, memory: Option<State>, cache: &Path) -> Result<State, String> {
     let mut file = fs::File::open(path).map_err(|e| e.to_string())?;
     let stat = file.metadata().map_err(|e| e.to_string())?;
     let mtime = i128::from(stat.mtime()) * 1_000_000_000 + i128::from(stat.mtime_nsec());
     let cached = memory.or_else(|| {
-        fs::read(&cache)
+        fs::read(cache)
             .ok()
             .and_then(|bytes| serde_json::from_slice::<State>(&bytes).ok())
     });
@@ -661,7 +676,7 @@ fn index_from(path: &Path, memory: Option<State>) -> Result<State, String> {
     .map_err(|e| e.to_string())?;
     if state.offset != initial || !cache.exists() {
         if let Ok(bytes) = serde_json::to_vec(&state) {
-            let _ = write_cache(&cache, &bytes);
+            let _ = write_cache(cache, &bytes);
         }
     }
     Ok(state)
@@ -774,4 +789,188 @@ fn inspect_detail(summary: &Value, turn_id: Option<&str>, detailed: bool) -> Res
     inspection["warnings"] = json!(warnings);
     result["inspection"] = inspection;
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    struct Fixture(PathBuf);
+
+    impl Fixture {
+        fn new() -> Self {
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "codex-inspector-sessions-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn log() -> String {
+        [
+            json!({"type": "session_meta", "payload": {"id": "parent"}}),
+            json!({"type": "event_msg", "payload": {"type": "task_started", "turn_id": "parent-turn"}}),
+            json!({"type": "event_msg", "payload": {"type": "task_started", "thread_id": "child", "turn_id": "child-turn"}}),
+        ]
+        .into_iter()
+        .map(|row| format!("{row}\n"))
+        .collect()
+    }
+
+    fn apply(state: &mut State, kind: &str, payload: Value) {
+        let row = json!({"type": kind, "timestamp": "2026-10-20T12:00:00Z", "payload": payload});
+        consume(state, &row);
+        statistics::consume(state, &row);
+    }
+
+    #[test]
+    fn unknown_originator_preserves_interactive_sessions() {
+        for originator in [Value::Null, json!(""), json!("Codex Desktop")] {
+            let row = json!({"id": "chat", "source": "vscode", "originator": originator});
+            assert_eq!(summary(&row, Path::new("/home"))["primary_source"], true);
+        }
+        let row = json!({"id": "chat", "source": "vscode"});
+        assert_eq!(summary(&row, Path::new("/home"))["primary_source"], true);
+        let row = json!({"id": "chat", "source": "vscode", "originator": "OtherClient"});
+        assert_eq!(summary(&row, Path::new("/home"))["primary_source"], false);
+    }
+
+    #[test]
+    fn foreign_events_cannot_change_parent_turns_or_usage_attribution() {
+        let mut state = State::default();
+        apply(&mut state, "session_meta", json!({"id": "parent"}));
+        apply(
+            &mut state,
+            "event_msg",
+            json!({"type": "task_started", "turn_id": "parent-turn"}),
+        );
+        apply(
+            &mut state,
+            "event_msg",
+            json!({"type": "task_started", "thread_id": "child", "turn_id": "child-turn"}),
+        );
+        apply(
+            &mut state,
+            "event_msg",
+            json!({"type": "token_count", "info": {"total_token_usage": {"total_tokens": 123}}}),
+        );
+        assert_eq!(state.turns.len(), 1);
+        assert_eq!(state.current_turn_id.as_deref(), Some("parent-turn"));
+        assert_eq!(
+            statistics::summary(&state.turns[0])["tokens"]["usage"]["total_tokens"],
+            123
+        );
+    }
+
+    #[test]
+    fn foreign_context_completion_and_instructions_are_ignored() {
+        let mut initial = State::default();
+        apply(&mut initial, "session_meta", json!({"id": "parent"}));
+        apply(
+            &mut initial,
+            "event_msg",
+            json!({"type": "task_started", "turn_id": "turn"}),
+        );
+        apply(
+            &mut initial,
+            "response_item",
+            json!({"type": "message", "role": "user", "content": [{"text": "# AGENTS.md instructions\nParent rules"}]}),
+        );
+        for (kind, payload) in [
+            (
+                "turn_context",
+                json!({"thread_id": "child", "turn_id": "turn", "cwd": "/child"}),
+            ),
+            (
+                "event_msg",
+                json!({"type": "task_complete", "thread_id": "child", "turn_id": "turn"}),
+            ),
+            (
+                "response_item",
+                json!({"type": "message", "thread_id": "child", "role": "user", "content": [{"text": "# AGENTS.md instructions\nChild rules"}]}),
+            ),
+            ("compacted", json!({"thread_id": "child"})),
+        ] {
+            let mut state = initial.clone();
+            apply(&mut state, kind, payload);
+            assert_eq!(
+                serde_json::to_value(state).unwrap(),
+                serde_json::to_value(&initial).unwrap(),
+                "{kind}"
+            );
+        }
+    }
+
+    #[test]
+    fn persisted_older_indexes_are_rebuilt_for_plain_and_compressed_logs() {
+        let fixture = Fixture::new();
+        for extension in ["jsonl", "jsonl.zst"] {
+            let path = fixture.0.join(format!("rollout.{extension}"));
+            let cache = fixture.0.join(format!("cache-{extension}.json"));
+            let text = log();
+            let bytes = if extension == "jsonl" {
+                text.into_bytes()
+            } else {
+                zstd::stream::encode_all(text.as_bytes(), 0).unwrap()
+            };
+            fs::write(&path, bytes).unwrap();
+            let mut old = index_with_cache(&path, None, &cache).unwrap();
+            assert_eq!(old.turns.len(), 1);
+            // Simulate an index from the prior parser, including a foreign turn.
+            old.version = CACHE_VERSION - 1;
+            turn(&mut old, &json!({"turn_id": "child-turn"}), None);
+            write_cache(&cache, &serde_json::to_vec(&old).unwrap()).unwrap();
+            let rebuilt = index_with_cache(&path, None, &cache).unwrap();
+            assert_eq!(rebuilt.version, CACHE_VERSION);
+            assert_eq!(rebuilt.turns.len(), 1);
+            assert_eq!(rebuilt.turns[0].id, "parent-turn");
+            let reused = index_with_cache(&path, Some(rebuilt), &cache).unwrap();
+            assert_eq!(reused.turns.len(), 1);
+        }
+    }
+
+    #[test]
+    fn partial_append_is_retried_without_duplicate_turns() {
+        let fixture = Fixture::new();
+        let path = fixture.0.join("rollout.jsonl");
+        let cache = fixture.0.join("cache.json");
+        fs::write(&path, log()).unwrap();
+        let initial = index_with_cache(&path, None, &cache).unwrap();
+        let line = format!(
+            "{}\n",
+            json!({"type": "event_msg", "payload": {"type": "task_started", "turn_id": "next"}})
+        );
+        let mut file = OpenOptions::new().append(true).open(&path).unwrap();
+        file.write_all(&line.as_bytes()[..25]).unwrap();
+        let partial = index_with_cache(&path, Some(initial), &cache).unwrap();
+        assert_eq!(partial.turns.len(), 1);
+        file.write_all(&line.as_bytes()[25..]).unwrap();
+        let complete = index_with_cache(&path, Some(partial), &cache).unwrap();
+        assert_eq!(
+            complete
+                .turns
+                .iter()
+                .map(|t| t.id.as_str())
+                .collect::<Vec<_>>(),
+            ["parent-turn", "next"]
+        );
+        assert_eq!(
+            index_with_cache(&path, Some(complete), &cache)
+                .unwrap()
+                .turns
+                .len(),
+            2
+        );
+    }
 }

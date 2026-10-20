@@ -47,7 +47,7 @@ func tokenPercentage(_ count: Int?, of total: Int?) -> String? {
   return String(format: "%.1f%%", Double(count) / Double(total) * 100)
 }
 
-struct TimingSegment: Identifiable {
+struct TimingSegment: Identifiable, Equatable {
   let id: Int
   let start: Double
   let end: Double
@@ -266,36 +266,15 @@ struct TurnStatisticsView: View {
   }
 
   private var timeline: some View {
-    GeometryReader { geometry in
-      Canvas { context, size in
-        for segment in segments {
-          let rect = CGRect(
-            x: size.width * segment.start / duration, y: 0,
-            width: size.width * segment.duration / duration, height: size.height)
-          context.fill(Path(rect), with: .color(segment.category.color))
-          if segment.id == hoveredSegment?.id && rect.width >= 1 {
-            context.stroke(
-              Path(rect.insetBy(dx: 0.5, dy: 0.5)), with: .color(.primary), lineWidth: 1)
-          }
-        }
-      }
-      .onContinuousHover { phase in
-        switch phase {
-        case .active(let location):
-          hoveredTime = min(
-            duration - 0.001, max(0, location.x / max(1, geometry.size.width) * duration))
-        case .ended: hoveredTime = nil
-        }
-      }
-    }
-    .frame(height: 26)
-    .clipShape(RoundedRectangle(cornerRadius: 6))
-    .accessibilityLabel("本轮耗时分布，分类总和等于记录总时长")
-    .help(
-      hoveredSegment.map { segment in
-        segment.category.explanation
-          + (segment.category == .overlap
-            ? " 重叠记录：" + segment.components.map(\.title).joined(separator: "、") : "")
-      } ?? "悬停查看各时间段的含义。")
+    NativeTimelineView(segments: segments, duration: duration) { hoveredTime = $0 }
+      .frame(height: 26)
+      .clipShape(RoundedRectangle(cornerRadius: 6))
+      .accessibilityLabel("本轮耗时分布，分类总和等于记录总时长")
+      .help(
+        hoveredSegment.map { segment in
+          segment.category.explanation
+            + (segment.category == .overlap
+              ? " 重叠记录：" + segment.components.map(\.title).joined(separator: "、") : "")
+        } ?? "悬停查看各时间段的含义。")
   }
 }

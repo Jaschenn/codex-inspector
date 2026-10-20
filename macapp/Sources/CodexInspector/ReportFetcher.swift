@@ -122,21 +122,22 @@ final class ReportFetcher: ObservableObject {
     let request = inspectionRequest
     queue.async { [weak self] in
       guard let self else { return }
-      let result = self.engine.request(request.payload)
+      let result = autoreleasepool { self.engine.request(request.payload) }
       DispatchQueue.main.async {
         self.isRequestRunning = false
-        self.isRefreshing = false
+        if self.isRefreshing { self.isRefreshing = false }
         guard request == self.inspectionRequest else {
           self.fetch(showProgress: self.isSessionLoading)
           return
         }
-        self.isSessionLoading = false
+        if self.isSessionLoading { self.isSessionLoading = false }
         switch result {
         case .success(let dict):
           self.report = dict
-          self.lastError = nil
+          if self.lastError != nil { self.lastError = nil }
           self.lastUpdated = Date()
           self.monitor.watch(report: dict)
+          MemoryReclaimer.afterActivity()
         case .failure(let error): self.lastError = error.description
         }
         if self.needsRefresh { self.scheduleEventRefresh() }

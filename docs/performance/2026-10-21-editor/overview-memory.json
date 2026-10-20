@@ -1,0 +1,242 @@
+[
+  {
+    "processes" : [
+      {
+        "footprintBytes" : 59524128,
+        "pid" : 35115,
+        "residentBytes" : 148488192
+      },
+      {
+        "footprintBytes" : 6324704,
+        "pid" : 35119,
+        "residentBytes" : 13189120
+      }
+    ],
+    "timestamp" : "2026-10-20T18:52:02Z",
+    "totalFootprintBytes" : 65848832
+  },
+  {
+    "processes" : [
+      {
+        "footprintBytes" : 59360288,
+        "pid" : 35115,
+        "residentBytes" : 148586496
+      },
+      {
+        "footprintBytes" : 5587424,
+        "pid" : 35119,
+        "residentBytes" : 12484608
+      }
+    ],
+    "timestamp" : "2026-10-20T18:52:03Z",
+    "totalFootprintBytes" : 64947712
+  },
+  {
+    "processes" : [
+      {
+        "footprintBytes" : 59360288,
+        "pid" : 35115,
+        "residentBytes" : 149241856
+      },
+      {
+        "footprintBytes" : 5587424,
+        "pid" : 35119,
+        "residentBytes" : 12484608
+      }
+    ],
+    "timestamp" : "2026-10-20T18:52:04Z",
+    "totalFootprintBytes" : 64947712
+  },
+  {
+    "processes" : [
+      {
+        "footprintBytes" : 59409440,
+        "pid" : 35115,
+        "residentBytes" : 148602880
+      },
+      {
+        "footprintBytes" : 5865952,
+        "pid" : 35119,
+        "residentBytes" : 12779520
+      }
+    ],
+    "timestamp" : "2026-10-20T18:52:05Z",
+    "totalFootprintBytes" : 65275392
+  },
+  {
+    "processes" : [
+      {
+        "footprintBytes" : 59606048,
+        "pid" : 35115,
+        "residentBytes" : 148602880
+      },
+      {
+        "footprintBytes" : 5702112,
+        "pid" : 35119,
+        "residentBytes" : 12795904
+      }
+    ],
+    "timestamp" : "2026-10-20T18:52:06Z",
+    "totalFootprintBytes" : 65308160
+  },
+  {
+    "processes" : [
+      {
+        "footprintBytes" : 59393056,
+        "pid" : 35115,
+        "residentBytes" : 148602880
+      },
+      {
+        "footprintBytes" : 5702112,
+        "pid" : 35119,
+        "residentBytes" : 12795904
+      }
+    ],
+    "timestamp" : "2026-10-20T18:52:07Z",
+    "totalFootprintBytes" : 65095168
+  },
+  {
+    "processes" : [
+      {
+        "footprintBytes" : 59393056,
+        "pid" : 35115,
+        "residentBytes" : 148586496
+      },
+      {
+        "footprintBytes" : 5685728,
+        "pid" : 35119,
+        "residentBytes" : 12795904
+      }
+    ],
+    "timestamp" : "2026-10-20T18:52:08Z",
+    "totalFootprintBytes" : 65078784
+  },
+  {
+    "processes" : [
+      {
+        "footprintBytes" : 59360288,
+        "pid" : 35115,
+        "residentBytes" : 148504576
+      },
+      {
+        "footprintBytes" : 5685728,
+        "pid" : 35119,
+        "residentBytes" : 12730368
+      }
+    ],
+    "timestamp" : "2026-10-20T18:52:09Z",
+    "totalFootprintBytes" : 65046016
+  },
+  {
+    "processes" : [
+      {
+        "footprintBytes" : 59360288,
+        "pid" : 35115,
+        "residentBytes" : 148520960
+      },
+      {
+        "footprintBytes" : 5652960,
+        "pid" : 35119,
+        "residentBytes" : 12533760
+      }
+    ],
+    "timestamp" : "2026-10-20T18:52:10Z",
+    "totalFootprintBytes" : 65013248
+  },
+  {
+    "processes" : [
+      {
+        "footprintBytes" : 58147872,
+        "pid" : 35115,
+        "residentBytes" : 148537344
+      },
+      {
+        "footprintBytes" : 5652960,
+        "pid" : 35119,
+        "residentBytes" : 12533760
+      }
+    ],
+    "timestamp" : "2026-10-20T18:52:11Z",
+    "totalFootprintBytes" : 63800832
+  },
+  {
+    "processes" : [
+      {
+        "footprintBytes" : 59425824,
+        "pid" : 35115,
+        "residentBytes" : 148553728
+      },
+      {
+        "footprintBytes" : 5603808,
+        "pid" : 35119,
+        "residentBytes" : 12533760
+      }
+    ],
+    "timestamp" : "2026-10-20T18:52:12Z",
+    "totalFootprintBytes" : 65029632
+  },
+  {
+    "processes" : [
+      {
+        "footprintBytes" : 59393056,
+        "pid" : 35115,
+        "residentBytes" : 148553728
+      },
+      {
+        "footprintBytes" : 5603808,
+        "pid" : 35119,
+        "residentBytes" : 12550144
+      }
+    ],
+    "timestamp" : "2026-10-20T18:52:13Z",
+    "totalFootprintBytes" : 64996864
+  },
+  {
+    "processes" : [
+      {
+        "footprintBytes" : 59409440,
+        "pid" : 35115,
+        "residentBytes" : 148619264
+      },
+      {
+        "footprintBytes" : 5603808,
+        "pid" : 35119,
+        "residentBytes" : 12550144
+      }
+    ],
+    "timestamp" : "2026-10-20T18:52:14Z",
+    "totalFootprintBytes" : 65013248
+  },
+  {
+    "processes" : [
+      {
+        "footprintBytes" : 58197024,
+        "pid" : 35115,
+        "residentBytes" : 147718144
+      },
+      {
+        "footprintBytes" : 5784032,
+        "pid" : 35119,
+        "residentBytes" : 12402688
+      }
+    ],
+    "timestamp" : "2026-10-20T18:52:15Z",
+    "totalFootprintBytes" : 63981056
+  },
+  {
+    "processes" : [
+      {
+        "footprintBytes" : 63489056,
+        "pid" : 35115,
+        "residentBytes" : 142721024
+      },
+      {
+        "footprintBytes" : 7782880,
+        "pid" : 35119,
+        "residentBytes" : 12353536
+      }
+    ],
+    "timestamp" : "2026-10-20T18:52:16Z",
+    "totalFootprintBytes" : 71271936
+  }
+]

@@ -55,6 +55,8 @@ fn compressed_encoding() -> Option<tiktoken_rs::CoreBPE> {
     tiktoken_rs::CoreBPE::new(encoder, special_tokens, tiktoken_rs::O200K_BASE_PAT_STR).ok()
 }
 
+static ENCODING: Mutex<Option<tiktoken_rs::CoreBPE>> = Mutex::new(None);
+
 pub fn estimate(text: &str) -> (Option<usize>, Option<&'static str>, &'static str) {
     let key = util::hash(text);
     if let Some(count) = cache()
@@ -64,8 +66,11 @@ pub fn estimate(text: &str) -> (Option<usize>, Option<&'static str>, &'static st
     {
         return (Some(count), Some("o200k_base"), "tiktoken");
     }
-    static ENCODING: OnceLock<Option<tiktoken_rs::CoreBPE>> = OnceLock::new();
-    if let Some(encoding) = ENCODING.get_or_init(compressed_encoding) {
+    let mut encoder = ENCODING.lock().unwrap_or_else(|e| e.into_inner());
+    if encoder.is_none() {
+        *encoder = compressed_encoding();
+    }
+    if let Some(encoding) = encoder.as_ref() {
         let count = encoding.encode_ordinary(text).len();
         if let Ok(mut cache) = cache().lock() {
             if cache.counts.len() >= 2048 {
@@ -87,6 +92,23 @@ pub fn estimate(text: &str) -> (Option<usize>, Option<&'static str>, &'static st
     }
 }
 pub fn save() {
+    // Uncached Skills in one report share the vocabulary. Afterwards only their
+    // small counts are needed; retaining the 200k-token BPE defeats a small idle footprint.
+    let released = ENCODING
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take()
+        .is_some();
+    #[cfg(target_os = "macos")]
+    if released {
+        unsafe extern "C" {
+            fn malloc_zone_pressure_relief(zone: *mut libc::c_void, goal: usize) -> usize;
+        }
+        // Return freed vocabulary pages to macOS, not live data or file-backed caches.
+        unsafe { malloc_zone_pressure_relief(std::ptr::null_mut(), 0) };
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = released;
     if let Ok(mut cache) = cache().lock() {
         if !cache.dirty {
             return;
