@@ -16,7 +16,7 @@ use std::{
 };
 use walkdir::WalkDir;
 const LIMIT: usize = 300;
-const CACHE_VERSION: u32 = 1; // Separate Rust namespace; never deserialize Python's untyped cache schema.
+const CACHE_VERSION: u32 = 2; // Compressed and decoded offsets have different meanings.
 const PREVIEW: usize = 1800;
 const ORIGINATORS: [&str; 5] = [
     "Codex Desktop",
@@ -45,10 +45,36 @@ fn summary(row: &Value, home: &Path) -> Value {
         .iter()
         .find_map(|k| row[*k].as_str().filter(|s| !s.is_empty()))
         .unwrap_or("未命名聊天");
-    json!({"id":format!("{}::{id}",home.display()),"thread_id":id,"title":util::truncate(title,500),"cwd":row["cwd"],"codex_home":home,"rollout_path":row["rollout_path"],
+    let path = row["rollout_path"]
+        .as_str()
+        .map(|raw| rollout_path(home, raw));
+    json!({"id":format!("{}::{id}",home.display()),"thread_id":id,"title":util::truncate(title,500),"cwd":row["cwd"],"codex_home":home,"rollout_path":path,
         "updated_at":row.get("updated_at").unwrap_or(&json!(0)),"archived":row["archived"].as_bool().unwrap_or_else(|| row["archived"].as_i64().unwrap_or(0) != 0),
         "source":row.get("source").unwrap_or(&json!("unknown")),"model":row["model"],
         "primary_source":row["source"] == "cli" || row["source"] == "vscode" && (row.get("originator").is_none() || ORIGINATORS.contains(&util::text(&row["originator"])))})
+}
+fn rollout_path(home: &Path, raw: &str) -> PathBuf {
+    let path = home.join(util::expand(raw));
+    if !path.exists() && path.extension().is_some_and(|s| s == "jsonl") {
+        let mut compressed = path.as_os_str().to_os_string();
+        compressed.push(".zst");
+        let compressed = PathBuf::from(compressed);
+        if compressed.is_file() {
+            return compressed;
+        }
+    }
+    path
+}
+fn compressed(path: &Path) -> bool {
+    path.extension().is_some_and(|s| s == "zst")
+}
+fn open_rollout(path: &Path) -> std::io::Result<Box<dyn Read>> {
+    let file = fs::File::open(path)?;
+    if compressed(path) {
+        Ok(Box::new(zstd::stream::read::Decoder::new(file)?))
+    } else {
+        Ok(Box::new(file))
+    }
 }
 fn database(home: &Path) -> Option<PathBuf> {
     let mut dirs = vec![home.to_path_buf(), home.join("sqlite")];
@@ -152,9 +178,10 @@ fn catalog_files(home: &Path, archived: bool, other: bool) -> Vec<Value> {
         .flat_map(|dir| WalkDir::new(dir).into_iter().filter_map(Result::ok))
         .filter(|e| {
             e.file_type().is_file()
-                && e.file_name()
-                    .to_str()
-                    .is_some_and(|s| s.starts_with("rollout-") && s.ends_with(".jsonl"))
+                && e.file_name().to_str().is_some_and(|s| {
+                    s.starts_with("rollout-")
+                        && (s.ends_with(".jsonl") || s.ends_with(".jsonl.zst"))
+                })
         })
         .map(|e| e.into_path())
         .collect();
@@ -167,7 +194,7 @@ fn catalog_files(home: &Path, archived: bool, other: bool) -> Vec<Value> {
     });
     let mut result = Vec::new();
     for path in paths {
-        let Ok(file) = fs::File::open(&path) else {
+        let Ok(file) = open_rollout(&path) else {
             continue;
         };
         let mut first = String::new();
@@ -237,6 +264,7 @@ pub struct State {
     offset: u64,
     inode: u64,
     mtime_ns: i128,
+    file_size: u64,
     boundary_hash: String,
     pub metadata: Value,
     pub turns: Vec<Turn>,
@@ -254,6 +282,7 @@ impl Default for State {
             offset: 0,
             inode: 0,
             mtime_ns: 0,
+            file_size: 0,
             boundary_hash: String::new(),
             metadata: json!({}),
             turns: Vec::new(),
@@ -529,7 +558,20 @@ pub fn index(path: &Path) -> Result<State, String> {
         .and_then(|bytes| serde_json::from_slice::<State>(&bytes).ok());
     let mut state = State::default();
     if let Some(cached) = cached {
-        if cached.version == CACHE_VERSION
+        // A Zstd stream cannot seek to a decoded offset. Reuse immutable archive indexes,
+        // and rebuild changed archives rather than confusing compressed and decoded bytes.
+        if compressed(path)
+            && cached.version == CACHE_VERSION
+            && cached.inode == stat.ino()
+            && cached.mtime_ns == mtime
+            && cached.file_size == stat.len()
+            && boundary(&mut file, stat.len()).ok().as_deref()
+                == Some(cached.boundary_hash.as_str())
+        {
+            return Ok(cached);
+        }
+        if !compressed(path)
+            && cached.version == CACHE_VERSION
             && cached.inode == stat.ino()
             && cached.offset <= stat.len()
             && cached.mtime_ns <= mtime
@@ -543,7 +585,12 @@ pub fn index(path: &Path) -> Result<State, String> {
     let initial = state.offset;
     file.seek(SeekFrom::Start(initial))
         .map_err(|e| e.to_string())?;
-    let mut reader = BufReader::new(file);
+    let input: Box<dyn Read> = if compressed(path) {
+        Box::new(zstd::stream::read::Decoder::new(file).map_err(|e| e.to_string())?)
+    } else {
+        Box::new(file)
+    };
+    let mut reader = BufReader::new(input);
     let mut line = Vec::new();
     loop {
         line.clear();
@@ -564,7 +611,17 @@ pub fn index(path: &Path) -> Result<State, String> {
     }
     state.inode = stat.ino();
     state.mtime_ns = mtime;
-    state.boundary_hash = boundary(reader.get_mut(), state.offset).map_err(|e| e.to_string())?;
+    state.file_size = stat.len();
+    let mut raw_file = fs::File::open(path).map_err(|e| e.to_string())?;
+    state.boundary_hash = boundary(
+        &mut raw_file,
+        if compressed(path) {
+            stat.len()
+        } else {
+            state.offset
+        },
+    )
+    .map_err(|e| e.to_string())?;
     if state.offset != initial || !cache.exists() {
         if let Ok(bytes) = serde_json::to_vec(&state) {
             let _ = write_cache(&cache, &bytes);
@@ -583,11 +640,12 @@ pub fn inspect(summary: &Value, turn_id: Option<&str>) -> Result<Value, String> 
         result["error"] = json!("这条聊天记录没有可读取的本地日志路径。");
         return Ok(result);
     };
-    let path = home.join(util::expand(raw));
+    let path = rollout_path(&home, raw);
+    result["rollout_path"] = json!(path);
     let state = match index(&path) {
         Ok(state) => state,
-        Err(_) => {
-            result["error"] = json!("聊天日志无法读取；文件可能已移动、删除或位于其他环境。");
+        Err(error) => {
+            result["error"] = json!(format!("聊天日志无法读取：{error}\n{}", path.display()));
             return Ok(result);
         }
     };
