@@ -43,7 +43,7 @@ rust-core/target/release/codex-inspector-core --validate-toml < config.toml
 - `rust-core/src/tokens.rs`：内嵌 `o200k_base` 分词表，完全离线的 Skill Token 估算。
 - `macapp/`：原生 SwiftUI 窗口、编辑器、Markdown 和打包脚本。
 
-默认每 3 秒生成 JSON 快照。日志索引缓存保存到 `~/Library/Caches/CodexInspector/rust-*.json`，
+默认每 3 秒生成 JSON 快照。多个目录存在状态数据库时，按数据库内最新聊天更新时间选择（包含 WAL 中的更新），避免同版本的旧数据库覆盖当前记录。日志索引缓存保存到 `~/Library/Caches/CodexInspector/rust-*.json`，
 Skill 分词缓存仅保存文本 SHA-256 和数量，命中时无需重新初始化分词器。缓存文件以 0600 权限创建。
 Rust 缓存与旧 Python 缓存使用不同文件名，首次打开聊天会重建索引。
 支持 `.jsonl` 和 `.jsonl.zst`；数据库仍指向旧 `.jsonl` 路径时自动查找同名压缩文件。压缩日志流式解压读取，未变化时复用索引；不写回或解压到 Codex 目录。

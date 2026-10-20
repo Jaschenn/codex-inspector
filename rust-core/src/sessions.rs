@@ -93,10 +93,30 @@ fn database(home: &Path) -> Option<PathBuf> {
                 .strip_suffix(".sqlite")?
                 .parse::<u64>()
                 .ok()?;
-            Some((number, p))
+            // Upgrades can leave identical state_N.sqlite names in both locations.
+            // Compare actual thread activity (including WAL), not directory iteration
+            // order or schema version alone, which can select an abandoned database.
+            let connection = Connection::open_with_flags(
+                &p,
+                OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            )
+            .ok()?;
+            connection.busy_timeout(Duration::from_millis(500)).ok()?;
+            let updated: i64 = connection
+                .query_row(
+                    "SELECT COALESCE(MAX(updated_at), 0) FROM threads",
+                    [],
+                    |row| row.get(0),
+                )
+                .ok()?;
+            let modified = p
+                .metadata()
+                .and_then(|m| m.modified())
+                .unwrap_or(UNIX_EPOCH);
+            Some((updated, number, modified, p))
         })
-        .max_by_key(|(n, _)| *n)
-        .map(|(_, p)| p)
+        .max_by_key(|(updated, number, modified, _)| (*updated, *number, *modified))
+        .map(|(_, _, _, p)| p)
 }
 fn catalog_db(home: &Path, archived: bool) -> Option<Vec<Value>> {
     let path = database(home)?;
