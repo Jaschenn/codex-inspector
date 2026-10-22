@@ -24,8 +24,12 @@ git push
 
 ## 2. 安装与升级
 
+Homebrew 7 起，安装第三方 tap 中的 cask 前需要显式信任该 tap：
+
 ```bash
-brew install --cask Jaschenn/tap/codex-inspector
+brew tap Jaschenn/tap
+brew trust Jaschenn/tap
+brew install --cask codex-inspector
 
 # 检查安装结果
 brew info --cask codex-inspector
@@ -35,13 +39,7 @@ codex-inspector-core --help
 brew upgrade --cask codex-inspector
 ```
 
-首次安装时 Homebrew 会自动 tap `Jaschenn/homebrew-tap`，不需要手动 `brew tap`。
-也可以显式执行：
-
-```bash
-brew tap Jaschenn/tap
-brew install --cask codex-inspector
-```
+旧版 Homebrew 没有 `brew trust` 命令时，可省略该步骤。
 
 ## 3. 配置 Release 自动更新 tap
 

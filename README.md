@@ -21,9 +21,12 @@ macOS 原生 Codex 检查工具，采用 SwiftUI + Rust，无 Python 或浏览�
 使用 Homebrew（个人 tap）：
 
 ```bash
-brew install --cask Jaschenn/tap/codex-inspector
+brew tap Jaschenn/tap
+brew trust Jaschenn/tap
+brew install --cask codex-inspector
 ```
 
+Homebrew 7 及以上要求先 `brew trust` 第三方 tap；旧版本可省略该命令。
 升级使用 `brew upgrade --cask codex-inspector`。tap 的创建与发布维护见
 [Homebrew 配置](docs/HOMEBREW.md)。
 
