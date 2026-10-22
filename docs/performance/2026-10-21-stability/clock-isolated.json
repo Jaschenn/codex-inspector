@@ -1,0 +1,43 @@
+{
+  "hitches": {
+    "count": 23,
+    "median_ms": 8.33325,
+    "max_ms": 29.166458,
+    "total_ms": 212.497787,
+    "durations_ms": [
+      8.333166,
+      8.333208,
+      29.166458,
+      8.33325,
+      8.33325,
+      8.33325,
+      8.33325,
+      8.33325,
+      8.33325,
+      8.333208,
+      8.333208,
+      8.333208,
+      8.333291,
+      8.33325,
+      8.33325,
+      8.33325,
+      8.33325,
+      8.333208,
+      8.333291,
+      8.33325,
+      8.33325,
+      8.333291,
+      8.33325
+    ]
+  },
+  "potential-hangs": {
+    "count": 1,
+    "median_ms": 52.906791,
+    "max_ms": 52.906791,
+    "total_ms": 52.906791,
+    "durations_ms": [
+      52.906791
+    ]
+  },
+  "method": "Final clock-isolated/menu-fixed build; completed turn 9, restored window/sidebar 250, six one-page scrolls in 8 seconds. No background builds and no AX/screenshot reads during recording. Includes profiler and system overhead; not a guarantee of zero missed frames."
+}

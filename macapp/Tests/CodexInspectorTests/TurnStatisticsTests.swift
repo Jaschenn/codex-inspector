@@ -31,6 +31,20 @@ final class TurnStatisticsTests: XCTestCase {
     XCTAssertNil(TimingSegment(index: 2, data: ["start_ms": 200, "end_ms": 100]))
   }
 
+  func testRecordedActivitiesAndResponseGapsKeepDistinctCategories() {
+    for (raw, expected) in [
+      ("compaction", TimelineCategory.compaction), ("sleep", .sleep),
+      ("response_gap", .responseGap),
+    ] {
+      let segment = TimingSegment(
+        index: 0, data: ["start_ms": 100, "end_ms": 1100, "category": raw])
+      XCTAssertEqual(segment?.category, expected)
+      XCTAssertEqual(segment?.duration, 1000)
+    }
+    XCTAssertTrue(TimelineCategory.responseGap.title.contains("原因未知"))
+    XCTAssertTrue(TimelineCategory.responseGap.explanation.contains("不计入实测"))
+  }
+
   func testDurationFormattingHandlesMissingAndLongDurations() {
     XCTAssertEqual(formattedDuration(-1), "未记录")
     XCTAssertEqual(formattedDuration(0), "0 毫秒")

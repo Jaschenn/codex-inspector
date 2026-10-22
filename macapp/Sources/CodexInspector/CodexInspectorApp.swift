@@ -21,28 +21,33 @@ struct CodexInspectorApp: App {
     MenuBarExtra {
       MenuContentView(fetcher: fetcher)
     } label: {
-      MenuBarLabel(fetcher: fetcher)
+      MenuBarLabel(state: fetcher.menuBarState)
     }
     .menuBarExtraStyle(.window)
   }
 }
 
 struct MenuBarLabel: View {
-  @ObservedObject var fetcher: ReportFetcher
+  @ObservedObject var state: MenuBarState
 
-  private var count: Int { fetcher.report.int("process_count") ?? 0 }
+  var body: some View {
+    MenuBarStatusLabel(count: state.count, failed: state.failed).equatable()
+  }
+}
+
+/// A live token/turn refresh does not change the menu-bar icon. Keep it outside
+/// that invalidation path: macOS captures status-item replicants when it redraws.
+struct MenuBarStatusLabel: View, Equatable {
+  let count: Int
+  let failed: Bool
 
   var body: some View {
     HStack(spacing: 3) {
-      Image(systemName: iconName)
-      if fetcher.lastError == nil {
+      Image(systemName: failed ? "exclamationmark.triangle" : "terminal")
+      if !failed {
         Text("\(count)")
       }
     }
   }
 
-  private var iconName: String {
-    if fetcher.lastError != nil { return "exclamationmark.triangle" }
-    return "terminal"
-  }
 }

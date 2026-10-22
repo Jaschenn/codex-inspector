@@ -1,0 +1,127 @@
+{
+  "hitches": {
+    "window_count": 7,
+    "median_ms": 8.33325,
+    "max_ms": 16.666458,
+    "total_ms": 66.66604,
+    "window_records": [
+      {
+        "start_ms": 1187.524875,
+        "duration_ms": 8.333208
+      },
+      {
+        "start_ms": 2129.184041,
+        "duration_ms": 16.666458
+      },
+      {
+        "start_ms": 3170.842333,
+        "duration_ms": 8.333291
+      },
+      {
+        "start_ms": 4212.500708,
+        "duration_ms": 8.333333
+      },
+      {
+        "start_ms": 4720.830041,
+        "duration_ms": 8.33325
+      },
+      {
+        "start_ms": 6304.150791,
+        "duration_ms": 8.33325
+      },
+      {
+        "start_ms": 7370.808958,
+        "duration_ms": 8.33325
+      }
+    ],
+    "post_window_records": [
+      {
+        "start_ms": 8520.799791,
+        "duration_ms": 8.333291
+      },
+      {
+        "start_ms": 9437.459125,
+        "duration_ms": 8.333291
+      },
+      {
+        "start_ms": 9545.791625,
+        "duration_ms": 20.833208
+      },
+      {
+        "start_ms": 9970.788166,
+        "duration_ms": 24.999875
+      },
+      {
+        "start_ms": 10020.787875,
+        "duration_ms": 8.333208
+      },
+      {
+        "start_ms": 10070.7875,
+        "duration_ms": 16.666458
+      },
+      {
+        "start_ms": 10120.787125,
+        "duration_ms": 8.333166
+      },
+      {
+        "start_ms": 10204.11975,
+        "duration_ms": 16.666541
+      },
+      {
+        "start_ms": 10337.452041,
+        "duration_ms": 24.999791
+      },
+      {
+        "start_ms": 10495.784041,
+        "duration_ms": 8.333333
+      },
+      {
+        "start_ms": 11195.774666,
+        "duration_ms": 1291.660208
+      },
+      {
+        "start_ms": 12495.768166,
+        "duration_ms": 54.166208
+      },
+      {
+        "start_ms": 12579.100833,
+        "duration_ms": 8.33325
+      },
+      {
+        "start_ms": 12745.766125,
+        "duration_ms": 8.333291
+      },
+      {
+        "start_ms": 12762.432666,
+        "duration_ms": 8.333291
+      }
+    ]
+  },
+  "potential-hangs": {
+    "window_count": 2,
+    "median_ms": 48.8999165,
+    "max_ms": 63.517,
+    "total_ms": 97.799833,
+    "window_records": [
+      {
+        "start_ms": 4165.038125,
+        "duration_ms": 34.282833
+      },
+      {
+        "start_ms": 5183.101375,
+        "duration_ms": 63.517
+      }
+    ],
+    "post_window_records": [
+      {
+        "start_ms": 8930.888125,
+        "duration_ms": 89.996416
+      },
+      {
+        "start_ms": 9171.992291,
+        "duration_ms": 1293.400536
+      }
+    ]
+  },
+  "method": "Final background-revision build, live latest turn, six one-page scrolls, preset 0 <= start < 8 seconds. All raw post-window rows retained separately. A 1293 ms AX focus query starts at 9172 ms and is outside the recording workload; retained, not counted as scrolling. No builds/AX reads during the defined interval. No zero-hitch guarantee."
+}

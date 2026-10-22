@@ -28,7 +28,11 @@ struct NativeChoicePicker: NSViewRepresentable {
   }
 
   func updateNSView(_ button: NSPopUpButton, context: Context) {
+    let changed =
+      context.coordinator.parent.choices != choices
+      || context.coordinator.parent.selection != selection
     context.coordinator.parent = self
+    guard changed || button.numberOfItems == 0 else { return }
     guard !context.coordinator.menuOpen else { return }
     context.coordinator.compactMenu()
   }

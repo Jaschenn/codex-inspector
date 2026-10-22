@@ -110,7 +110,6 @@ struct DetailView: View {
     var bits: [String] = []
     if let v = co.str("profile") { bits.append("profile=\(v)") }
     if let v = co.str("cd") { bits.append("cd=\(shortenPath(v))") }
-    if let v = co.str("config_path") { bits.append("config=\(shortenPath(v))") }
     for pair in cOverrides where pair.count == 2 {
       bits.append("-c \(pair[0])=\(pair[1])")
     }

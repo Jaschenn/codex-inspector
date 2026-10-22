@@ -226,10 +226,7 @@ struct InspectorWindowView: View {
           .frame(width: 6, height: 6)
         VStack(alignment: .leading, spacing: 4) {
           Text(fetcher.lastError == nil ? "自动更新 · 每秒兜底" : "刷新失败，正在重试")
-          if let updated = fetcher.lastUpdated {
-            Text("更新于 \(updated.formatted(date: .omitted, time: .standard))")
-              .monospacedDigit()
-          }
+          ReportUpdatedLabel(clock: fetcher.updateClock)
         }
         Spacer(minLength: 0)
       }
@@ -357,30 +354,45 @@ struct InspectorWindowView: View {
           .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let detail = sessionDetail {
           ScrollView {
-            LazyVStack(alignment: .leading, spacing: 16) {
-              if let error = detail.str("error") { diagnosticBanner(error, color: .orange) }
-              if detail.subDict("selected_turn").isEmpty {
-                hint("选择其他聊天，或等待本地日志记录新的轮次。")
-              } else if section == .overview {
-                sessionOverview(detail)
-              } else if section == .agents {
-                hint("按所选轮次目录扫描磁盘当前文件；不是历史文件快照。")
-                if let inspection = currentInspection { agentCards(inspection) }
-                recordedInstructionCards(detail)
-              } else if let inspection = currentInspection {
-                hint("按所选轮次目录扫描磁盘当前配置；不代表当时的生效配置或模型请求内容。")
-                switch section {
-                case .configurations: configurationCards(inspection)
-                case .skills: skillCards(inspection)
-                case .mcp: mcpCards(inspection)
-                case .mergedConfig: mergedConfiguration(inspection)
-                case .warnings: warningCards(inspection)
-                case .overview, .agents: EmptyView()
+            if section == .overview {
+              VStack(alignment: .leading, spacing: 16) {
+                if let error = detail.str("error") { diagnosticBanner(error, color: .orange) }
+                if detail.subDict("selected_turn").isEmpty {
+                  hint("选择其他聊天，或等待本地日志记录新的轮次。")
+                } else {
+                  ReportRevisionView(
+                    revision: fetcher.report.subDict("_view_revisions").int("overview") ?? 0
+                  ) {
+                    sessionOverview(detail)
+                  }.equatable()
                 }
               }
+              .frame(maxWidth: 1120, alignment: .leading)
+              .padding(24).frame(maxWidth: .infinity)
+            } else {
+              LazyVStack(alignment: .leading, spacing: 16) {
+                if let error = detail.str("error") { diagnosticBanner(error, color: .orange) }
+                if detail.subDict("selected_turn").isEmpty {
+                  hint("选择其他聊天，或等待本地日志记录新的轮次。")
+                } else if section == .agents {
+                  hint("按所选轮次目录扫描磁盘当前文件；不是历史文件快照。")
+                  if let inspection = currentInspection { agentCards(inspection) }
+                  recordedInstructionCards(detail)
+                } else if let inspection = currentInspection {
+                  hint("按所选轮次目录扫描磁盘当前配置；不代表当时的生效配置或模型请求内容。")
+                  switch section {
+                  case .configurations: configurationCards(inspection)
+                  case .skills: skillCards(inspection)
+                  case .mcp: mcpCards(inspection)
+                  case .mergedConfig: mergedConfiguration(inspection)
+                  case .warnings: warningCards(inspection)
+                  case .overview, .agents: EmptyView()
+                  }
+                }
+              }
+              .frame(maxWidth: 1120, alignment: .leading)
+              .padding(24).frame(maxWidth: .infinity)
             }
-            .frame(maxWidth: 1120, alignment: .leading)
-            .padding(24).frame(maxWidth: .infinity)
           }
           .id(
             "session-\(selectedSessionID ?? "")-\(selectedTurnID ?? "latest")-\(section.rawValue)")
@@ -405,10 +417,15 @@ struct InspectorWindowView: View {
     }
   }
 
-  private func sessionOverview(_ detail: [String: Any]) -> some View {
+  @ViewBuilder private func sessionOverview(_ detail: [String: Any]) -> some View {
     let turn = detail.subDict("selected_turn")
-    return LazyVStack(alignment: .leading, spacing: 16) {
-      TurnStatisticsView(statistics: turn.subDict("statistics"))
+    // The overview has a bounded number of cards. Keep their layout alive while
+    // scrolling instead of recreating cards from lazy height estimates.
+    Group {
+      ReportRevisionView(revision: fetcher.report.subDict("_view_revisions").int("statistics") ?? 0)
+      {
+        TurnStatisticsView(statistics: turn.subDict("statistics"))
+      }.equatable()
       InspectionCard(title: "轮次与目录", icon: "clock.arrow.circlepath") {
         HStack(spacing: 12) {
           Text("第 \(turn.int("number") ?? 0) 轮").font(.system(size: 13, weight: .medium))
@@ -422,7 +439,9 @@ struct InspectorWindowView: View {
           Text(turn.str("model") ?? "模型未记录").foregroundColor(.secondary)
         }
         .font(.system(size: 13))
-        DisclosureGroup("查看时间、工具调用与目录来源") {
+        InspectionField(
+          label: "工作目录", value: shortenPath(detail.str("cwd")), path: detail.str("cwd"))
+        DisclosureGroup("轮次时间与目录来源") {
           VStack(alignment: .leading, spacing: 14) {
             InspectionField(
               label: "记录状态",
@@ -435,7 +454,7 @@ struct InspectorWindowView: View {
             InspectionField(
               label: "结束时间", value: recordedDate(turn.str("completed_at")), monospaced: false)
             InspectionField(
-              label: "工具调用", value: "\(turn.int("tool_count") ?? 0)", monospaced: false)
+              label: "模型工具调用", value: "\(turn.int("tool_count") ?? 0) 次", monospaced: false)
             InspectionField(
               label: "轮次工作目录", value: shortenPath(detail.str("cwd")), path: detail.str("cwd"))
             InspectionField(
@@ -453,6 +472,12 @@ struct InspectorWindowView: View {
           .padding(.top, 14)
         }
         .font(.system(size: 13))
+      }
+      InspectionCard(title: "本轮活动", icon: "square.stack.3d.up") {
+        ReportRevisionView(revision: fetcher.report.subDict("_view_revisions").int("activity") ?? 0)
+        {
+          TurnActivityView(activity: turn.subDict("activity"), cwd: detail.str("cwd"))
+        }.equatable().id(turn.str("id") ?? "latest")
       }
       InspectionCard(title: "用户消息预览", icon: "person.bubble") {
         MarkdownContentView(
@@ -595,16 +620,11 @@ struct InspectorWindowView: View {
         if let directory = overrides.str("cd") {
           InspectionField(label: "指定工作目录", value: directory, path: directory)
         }
-        if let config = overrides.str("config_path") {
-          InspectionField(label: "指定配置文件", value: config, path: config)
-        }
         let pairs = overrides["c_overrides"] as? [[Any]] ?? []
         if !pairs.isEmpty {
           CodeBlockView(text: formattedOverrides(pairs), language: .toml, maxHeight: 320)
         }
-        if pairs.isEmpty && overrides.str("profile") == nil && overrides.str("cd") == nil
-          && overrides.str("config_path") == nil
-        {
+        if pairs.isEmpty && overrides.str("profile") == nil && overrides.str("cd") == nil {
           hint("没有命令行覆盖项")
         }
       }
@@ -663,6 +683,10 @@ struct InspectorWindowView: View {
         ) {
           InspectionField(label: "范围", value: doc.str("scope") ?? "—", monospaced: false)
           InspectionField(label: "文件", value: shortenPath(doc.str("path")), path: doc.str("path"))
+          if doc.bool("truncated") == true {
+            diagnosticBanner(
+              "指令长度达到配置上限，仅纳入文件前 \(doc.int("included_bytes") ?? 0) 字节。", color: .orange)
+          }
         }
       }
     }

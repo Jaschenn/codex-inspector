@@ -244,6 +244,9 @@ struct MenuContentView: View {
     case .output: return "回复输出"
     case .command: return "命令 / 等待"
     case .tool: return "工具 / 等待"
+    case .compaction: return "上下文压缩"
+    case .sleep: return "主动等待"
+    case .responseGap: return "响应间隔 · 原因未知"
     case .overlap: return "活动重叠"
     case .unknown: return "未分类时间"
     }

@@ -6,6 +6,7 @@ import Foundation
 final class InspectionMonitor {
   private var stream: FSEventStreamRef?
   private var paths: [String] = []
+  private var lastCandidates: Set<String> = []
   private let onChange: () -> Void
 
   init(onChange: @escaping () -> Void) { self.onChange = onChange }
@@ -48,6 +49,14 @@ final class InspectionMonitor {
     if let rollout = report.subDict("menu_session").str("rollout_path") {
       candidates.insert(URL(fileURLWithPath: rollout).deletingLastPathComponent().path)
     }
+    // Token/timing updates do not change watch roots. Keep the current broader
+    // ancestor watch for newly created folders; rebuild if a watched root disappears.
+    if candidates == lastCandidates && !paths.isEmpty
+      && paths.allSatisfy({ manager.fileExists(atPath: $0) })
+    {
+      return
+    }
+    lastCandidates = candidates
     // Watch the closest existing ancestor when configuration folders do not exist yet.
     let existing = Set(
       candidates.map { path -> String in

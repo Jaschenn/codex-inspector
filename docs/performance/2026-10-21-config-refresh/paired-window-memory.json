@@ -1,0 +1,154 @@
+{
+  "scenario": "Both Release app copies, same completed fifth turn of same chat, overview at top, default 1160x780 windows, 280-point sidebar. Both previously opened latest turn. Original app remains running; live log/menu updates continue.",
+  "samples": [
+    {
+      "timestamp": "2026-10-21T13:15:42.615610+00:00",
+      "candidate_ui": 91276392,
+      "candidate_core": 7029216,
+      "baseline_ui": 88015976,
+      "baseline_core": 7602656,
+      "candidate_total": 98305608,
+      "baseline_total": 95618632
+    },
+    {
+      "timestamp": "2026-10-21T13:15:43.700335+00:00",
+      "candidate_ui": 91276392,
+      "candidate_core": 6423008,
+      "baseline_ui": 88015976,
+      "baseline_core": 7602656,
+      "candidate_total": 97699400,
+      "baseline_total": 95618632
+    },
+    {
+      "timestamp": "2026-10-21T13:15:44.775346+00:00",
+      "candidate_ui": 91276392,
+      "candidate_core": 6636000,
+      "baseline_ui": 88015976,
+      "baseline_core": 7619040,
+      "candidate_total": 97912392,
+      "baseline_total": 95635016
+    },
+    {
+      "timestamp": "2026-10-21T13:15:45.854471+00:00",
+      "candidate_ui": 91440232,
+      "candidate_core": 6603232,
+      "baseline_ui": 88015976,
+      "baseline_core": 6685152,
+      "candidate_total": 98043464,
+      "baseline_total": 94701128
+    },
+    {
+      "timestamp": "2026-10-21T13:15:46.937689+00:00",
+      "candidate_ui": 91702376,
+      "candidate_core": 6455776,
+      "baseline_ui": 88015976,
+      "baseline_core": 6848992,
+      "candidate_total": 98158152,
+      "baseline_total": 94864968
+    },
+    {
+      "timestamp": "2026-10-21T13:15:48.023873+00:00",
+      "candidate_ui": 91702376,
+      "candidate_core": 6144480,
+      "baseline_ui": 88015976,
+      "baseline_core": 6783456,
+      "candidate_total": 97846856,
+      "baseline_total": 94799432
+    },
+    {
+      "timestamp": "2026-10-21T13:15:49.103873+00:00",
+      "candidate_ui": 91702376,
+      "candidate_core": 6144480,
+      "baseline_ui": 88015976,
+      "baseline_core": 6717920,
+      "candidate_total": 97846856,
+      "baseline_total": 94733896
+    },
+    {
+      "timestamp": "2026-10-21T13:15:50.190603+00:00",
+      "candidate_ui": 91653224,
+      "candidate_core": 6980064,
+      "baseline_ui": 88015976,
+      "baseline_core": 6619616,
+      "candidate_total": 98633288,
+      "baseline_total": 94635592
+    },
+    {
+      "timestamp": "2026-10-21T13:15:51.285653+00:00",
+      "candidate_ui": 91669608,
+      "candidate_core": 6324704,
+      "baseline_ui": 88409192,
+      "baseline_core": 6767072,
+      "candidate_total": 97994312,
+      "baseline_total": 95176264
+    },
+    {
+      "timestamp": "2026-10-21T13:15:52.376933+00:00",
+      "candidate_ui": 91702376,
+      "candidate_core": 6291936,
+      "baseline_ui": 88474728,
+      "baseline_core": 6750688,
+      "candidate_total": 97994312,
+      "baseline_total": 95225416
+    },
+    {
+      "timestamp": "2026-10-21T13:15:53.461006+00:00",
+      "candidate_ui": 91702376,
+      "candidate_core": 6062560,
+      "baseline_ui": 88573032,
+      "baseline_core": 6455776,
+      "candidate_total": 97764936,
+      "baseline_total": 95028808
+    },
+    {
+      "timestamp": "2026-10-21T13:15:54.545984+00:00",
+      "candidate_ui": 91898984,
+      "candidate_core": 6062560,
+      "baseline_ui": 88769640,
+      "baseline_core": 6390240,
+      "candidate_total": 97961544,
+      "baseline_total": 95159880
+    },
+    {
+      "timestamp": "2026-10-21T13:15:55.635703+00:00",
+      "candidate_ui": 91735144,
+      "candidate_core": 6062560,
+      "baseline_ui": 88769640,
+      "baseline_core": 6390240,
+      "candidate_total": 97797704,
+      "baseline_total": 95159880
+    },
+    {
+      "timestamp": "2026-10-21T13:15:56.718830+00:00",
+      "candidate_ui": 91751528,
+      "candidate_core": 6062560,
+      "baseline_ui": 88687720,
+      "baseline_core": 6390240,
+      "candidate_total": 97814088,
+      "baseline_total": 95077960
+    },
+    {
+      "timestamp": "2026-10-21T13:15:57.803631+00:00",
+      "candidate_ui": 91833448,
+      "candidate_core": 6423008,
+      "baseline_ui": 88491112,
+      "baseline_core": 6406624,
+      "candidate_total": 98256456,
+      "baseline_total": 94897736
+    }
+  ],
+  "pids": {
+    "candidate_ui": 91644,
+    "candidate_core": 91646,
+    "baseline_ui": 91702,
+    "baseline_core": 91703
+  },
+  "unit": "bytes, physical footprint; per-app process sum is approximate",
+  "limitations": [
+    "Same completed turn and displayed statistics/activity were verified in both app copies.",
+    "Window defaults were configured at 1160x780; actual physical frame dimensions were not independently measured.",
+    "Window focus, startup order and previous loading history differed; this is not a strict controlled A/B.",
+    "Live logs and menu summaries continued updating, and the original application remained running.",
+    "Per-app sums of physical footprint are approximate because pages can be shared."
+  ]
+}

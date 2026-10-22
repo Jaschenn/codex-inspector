@@ -1,0 +1,20 @@
+{
+  "completed_turns": 33,
+  "total_duration_ms": 17600772,
+  "before_unknown_ms": 11627000,
+  "after_totals_ms": {
+    "response_gap": 10983023,
+    "output": 493696,
+    "first_token_wait": 192569,
+    "tool": 373266,
+    "reasoning": 3214626,
+    "unknown": 265563,
+    "command": 1412334,
+    "overlap": 52265,
+    "compaction": 378414,
+    "sleep": 235016
+  },
+  "zero_duration_items": 339,
+  "unsupported_item_types": [],
+  "duration_and_partition_checks_passed": true
+}

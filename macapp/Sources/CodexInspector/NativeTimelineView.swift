@@ -16,6 +16,7 @@ struct NativeTimelineView: NSViewRepresentable {
 
   func updateNSView(_ view: Plot, context: Context) {
     if view.segments != segments || view.duration != duration {
+      view.resetHover()
       view.segments = segments
       view.duration = duration
       view.needsDisplay = true
@@ -30,6 +31,11 @@ struct NativeTimelineView: NSViewRepresentable {
     var onHover: ((Double?) -> Void)?
     private var tracking: NSTrackingArea?
     private var hoveredID: Int?
+
+    func resetHover() {
+      hoveredID = nil
+      toolTip = nil
+    }
 
     override func updateTrackingAreas() {
       if let tracking { removeTrackingArea(tracking) }
@@ -90,6 +96,9 @@ extension TimelineCategory {
     case .output: return .systemBlue
     case .command: return .systemGreen
     case .tool: return .systemTeal
+    case .compaction: return .systemIndigo
+    case .sleep: return .systemBrown
+    case .responseGap: return .systemYellow
     case .overlap: return .systemPink
     case .unknown: return .systemGray
     }

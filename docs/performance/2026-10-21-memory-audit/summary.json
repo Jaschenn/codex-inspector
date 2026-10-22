@@ -1,0 +1,30 @@
+{
+  "captured_at": "2026-10-21 20:34:01 +08:00",
+  "heap_total_bytes": 38436478,
+  "matched_bytes": 38416606,
+  "unmatched_bytes": 19872,
+  "groups": {
+    "vector glyphs and paths": 8064192,
+    "other ownership": 5696384,
+    "AttributeGraph": 5335006,
+    "other UI": 4807248,
+    "Objective-C runtime": 4058480,
+    "Swift type metadata": 3882880,
+    "font and text system": 3074128,
+    "other graphics": 1676480,
+    "other CoreUI": 986384,
+    "syntax rule cache": 347696,
+    "other Swift runtime": 268752,
+    "report and engine objects": 218976
+  },
+  "footprints": {
+    "inspector_ui": 94782592,
+    "inspector_core": 7668216,
+    "ccswitch_main": 57853176,
+    "ccswitch_webcontent": 292047056,
+    "ccswitch_gpu": 24740872,
+    "ccswitch_network": 7799312,
+    "ccswitch_helper": 17383880
+  },
+  "method": "Exact allocation address and size matching against primary ownership tree. Group labels are inferred from type names and ownership paths, not creation call stacks. Physical footprint process sums are approximate because some pages are shared."
+}

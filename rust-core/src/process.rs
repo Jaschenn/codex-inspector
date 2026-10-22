@@ -14,35 +14,103 @@ pub struct RawProcess {
 struct Overrides {
     profile: Option<String>,
     cd: Option<String>,
-    config_path: Option<String>,
     codex_home: Option<String>,
     c_overrides: Vec<(String, Value)>,
 }
 fn overrides(cmdline: &str) -> Overrides {
     let tokens = shlex::split(cmdline)
         .unwrap_or_else(|| cmdline.split_whitespace().map(str::to_owned).collect());
+    overrides_from_arguments(&tokens)
+}
+
+fn overrides_from_arguments(tokens: &[String]) -> Overrides {
     let mut result = Overrides::default();
+    let mut dedicated = Vec::new();
     let mut i = 1;
     while i < tokens.len() {
-        let (flag, inline) = tokens[i]
-            .split_once('=')
-            .map(|(a, b)| (a, Some(b.to_owned())))
-            .unwrap_or((&tokens[i], None));
-        if ["--profile", "--cd", "-C", "--config", "-c"].contains(&flag) {
+        if tokens[i] == "--" {
+            break;
+        }
+        if [
+            "--search",
+            "--yolo",
+            "--dangerously-bypass-approvals-and-sandbox",
+        ]
+        .contains(&tokens[i].as_str())
+        {
+            if tokens[i] == "--search" {
+                dedicated.push(("web_search".into(), json!("live")));
+            } else {
+                dedicated.push(("approval_policy".into(), json!("never")));
+                dedicated.push(("sandbox_mode".into(), json!("danger-full-access")));
+            }
+            i += 1;
+            continue;
+        }
+        let token = &tokens[i];
+        let (flag, inline) = if token.len() > 2
+            && ["-c", "-p", "-C", "-m", "-s", "-a"]
+                .iter()
+                .any(|flag| token.starts_with(flag))
+        {
+            (
+                &token[..2],
+                Some(
+                    token[2..]
+                        .strip_prefix('=')
+                        .unwrap_or(&token[2..])
+                        .to_owned(),
+                ),
+            )
+        } else {
+            token
+                .split_once('=')
+                .map(|(a, b)| (a, Some(b.to_owned())))
+                .unwrap_or((token.as_str(), None))
+        };
+        if [
+            "--profile",
+            "-p",
+            "--cd",
+            "-C",
+            "--config",
+            "-c",
+            "--model",
+            "-m",
+            "--sandbox",
+            "-s",
+            "--ask-for-approval",
+            "-a",
+            "--enable",
+            "--disable",
+        ]
+        .contains(&flag)
+        {
             let value = inline.clone().or_else(|| tokens.get(i + 1).cloned());
             if let Some(value) = value {
                 match flag {
-                    "--profile" => result.profile = Some(value),
+                    "--profile" | "-p" => result.profile = Some(value),
                     "--cd" | "-C" => result.cd = Some(value),
-                    "--config" => result.config_path = Some(value),
-                    "-c" => {
+                    "--config" | "-c" => {
                         if let Some((key, raw)) = value.split_once('=') {
+                            if key.trim().is_empty() {
+                                i += if inline.is_some() { 1 } else { 2 };
+                                continue;
+                            }
                             let value = config::scalar(raw);
                             if key.trim() == "codex_home" {
                                 result.codex_home = value.as_str().map(str::to_owned);
                             }
                             result.c_overrides.push((key.trim().to_owned(), value));
                         }
+                    }
+                    "--model" | "-m" => dedicated.push(("model".into(), json!(value))),
+                    "--sandbox" | "-s" => dedicated.push(("sandbox_mode".into(), json!(value))),
+                    "--ask-for-approval" | "-a" => {
+                        dedicated.push(("approval_policy".into(), json!(value)))
+                    }
+                    "--enable" | "--disable" => {
+                        dedicated.push((format!("features.{value}"), json!(flag == "--enable")))
                     }
                     _ => {}
                 }
@@ -52,6 +120,8 @@ fn overrides(cmdline: &str) -> Overrides {
         }
         i += 1;
     }
+    // Dedicated clap fields override arbitrary config values, independent of argument order.
+    result.c_overrides.extend(dedicated);
     result
 }
 pub fn scan() -> Result<Vec<RawProcess>, String> {
@@ -226,7 +296,13 @@ pub fn inspect(process: &RawProcess) -> Result<Value, String> {
         overrides.profile.as_deref(),
         &overrides.c_overrides,
     );
-    let mut warnings = Vec::new();
+    let mut warnings: Vec<String> = report["warnings"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect();
     if let Some(error) = &error {
         warnings.push(format!("cwd: {error}"));
     }
@@ -378,4 +454,78 @@ fn native_scan() -> Option<Vec<RawProcess>> {
         });
     }
     Some(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compact_short_options_keep_their_values() {
+        let result = overrides(
+            "codex -preview -C'/path with spaces' -cmodel=generic -mselected -sread-only -aon-request",
+        );
+        assert_eq!(result.profile.as_deref(), Some("review"));
+        assert_eq!(result.cd.as_deref(), Some("/path with spaces"));
+        assert_eq!(
+            result.c_overrides,
+            vec![
+                ("model".into(), json!("generic")),
+                ("model".into(), json!("selected")),
+                ("sandbox_mode".into(), json!("read-only")),
+                ("approval_policy".into(), json!("on-request"))
+            ]
+        );
+    }
+
+    #[test]
+    fn long_config_alias_supports_repeatable_toml_values_and_spaces() {
+        let parsed = overrides(
+            "codex --config 'model=with spaces' -c 'features.apps=false' --config='items=[1, 2]'",
+        );
+        assert_eq!(
+            parsed.c_overrides,
+            vec![
+                ("model".into(), json!("with spaces")),
+                ("features.apps".into(), json!(false)),
+                ("items".into(), json!([1, 2]))
+            ]
+        );
+    }
+    #[test]
+    fn dedicated_flags_take_precedence_and_end_of_options_is_respected() {
+        let parsed = overrides(
+            "codex -p review --cd='/project with spaces' -m selected --config model=generic --search --disable apps -- --config model=prompt",
+        );
+        assert_eq!(parsed.profile.as_deref(), Some("review"));
+        assert_eq!(parsed.cd.as_deref(), Some("/project with spaces"));
+        assert_eq!(
+            parsed.c_overrides,
+            vec![
+                ("model".into(), json!("generic")),
+                ("model".into(), json!("selected")),
+                ("web_search".into(), json!("live")),
+                ("features.apps".into(), json!(false))
+            ]
+        );
+    }
+    #[test]
+    fn argument_roundtrip_keeps_prompt_and_config_as_distinct_values() {
+        let arguments = [
+            "codex",
+            "exec",
+            "a prompt containing --config model=wrong",
+            "--config",
+            "model='with spaces'",
+        ];
+        let command = arguments
+            .iter()
+            .map(|argument| shlex::try_quote(argument).unwrap().into_owned())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert_eq!(
+            overrides(&command).c_overrides,
+            vec![("model".into(), json!("with spaces"))]
+        );
+    }
 }

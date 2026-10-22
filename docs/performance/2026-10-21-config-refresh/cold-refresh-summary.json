@@ -1,0 +1,48 @@
+{
+  "runs": {
+    "legacy": [
+      {
+        "after_pool_bytes": 32473880,
+        "before_bytes": 9290448,
+        "elapsed_ms": 234.38596725463867,
+        "peak_bytes": 85361432
+      },
+      {
+        "after_pool_bytes": 32457496,
+        "before_bytes": 9224912,
+        "elapsed_ms": 233.801007270813,
+        "peak_bytes": 85377816
+      },
+      {
+        "after_pool_bytes": 32424728,
+        "before_bytes": 9257680,
+        "elapsed_ms": 232.47897624969482,
+        "peak_bytes": 85312280
+      }
+    ],
+    "pooled": [
+      {
+        "after_pool_bytes": 10142416,
+        "before_bytes": 9192144,
+        "elapsed_ms": 227.7209758758545,
+        "peak_bytes": 10142416
+      },
+      {
+        "after_pool_bytes": 10175184,
+        "before_bytes": 9241296,
+        "elapsed_ms": 224.91693496704102,
+        "peak_bytes": 10175184
+      },
+      {
+        "after_pool_bytes": 10175184,
+        "before_bytes": 9241296,
+        "elapsed_ms": 228.05392742156982,
+        "peak_bytes": 10175184
+      }
+    ]
+  },
+  "fixture_bytes": 314025,
+  "records": 5000,
+  "iterations": 40,
+  "method": "Independent Release XCTest processes, alternating order. Preparation-only synthetic test, not total application memory."
+}

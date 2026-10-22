@@ -1,12 +1,3 @@
-# Python
-__pycache__/
-*.py[cod]
-*.egg-info/
-.venv/
-build/
-dist/
-*.egg
-
 # Swift / SwiftPM
 rust-core/target/
 macapp/.build/
@@ -18,6 +9,7 @@ macapp/dist/
 
 # Editors / assistants
 .claude/
+.codex/
 .vscode/
 .idea/
 

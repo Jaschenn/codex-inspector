@@ -120,3 +120,29 @@ pub fn save() {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn embedded_vocabulary_matches_official_tokenizer() {
+        // Keep the tokenizer equivalence check in Rust after retiring the Python
+        // implementation: compression must preserve ordinary/special-token text.
+        let embedded = compressed_encoding().expect("embedded vocabulary");
+        let official = tiktoken_rs::o200k_base().expect("official vocabulary");
+        for text in [
+            "",
+            "Hello, world!",
+            "你好，世界。",
+            "<|endoftext|>",
+            "---\nname: example\n---\n# Test\n",
+        ] {
+            assert_eq!(
+                embedded.encode_ordinary(text),
+                official.encode_ordinary(text),
+                "{text:?}"
+            );
+        }
+    }
+}

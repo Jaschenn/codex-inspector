@@ -2,7 +2,8 @@ import SwiftUI
 
 enum TimelineCategory: String {
   case firstToken = "first_token_wait"
-  case reasoning, output, command, tool, overlap, unknown
+  case reasoning, output, command, tool, compaction, sleep, overlap, unknown
+  case responseGap = "response_gap"
 
   var title: String {
     switch self {
@@ -11,6 +12,9 @@ enum TimelineCategory: String {
     case .output: return "回复输出"
     case .command: return "命令执行 / 等待"
     case .tool: return "工具调用 / 等待返回"
+    case .compaction: return "上下文压缩"
+    case .sleep: return "主动等待"
+    case .responseGap: return "响应间隔（原因未知）"
     case .overlap: return "活动重叠"
     case .unknown: return "未分类时间"
     }
@@ -23,6 +27,9 @@ enum TimelineCategory: String {
     case .output: return .blue
     case .command: return .green
     case .tool: return .teal
+    case .compaction: return .indigo
+    case .sleep: return .brown
+    case .responseGap: return .yellow
     case .overlap: return .pink
     case .unknown: return .gray
     }
@@ -35,6 +42,10 @@ enum TimelineCategory: String {
     case .reasoning: return "日志可观测的推理事件区间，不代表完整的模型内部思考时间。"
     case .command: return "命令的可观测执行区间，包含命令内部的等待，不等于 CPU 运行时间。"
     case .tool: return "工具调用到返回的可观测区间，包含等待返回。"
+    case .compaction: return "日志明确记录的上下文压缩起止区间，包含摘要生成及处理。"
+    case .sleep: return "日志明确记录的 clock.sleep 主动等待区间，不属于模型推理。"
+    case .responseGap:
+      return "用户消息、工具返回或前一模型输出之后，到下一模型事件开始之间的日志间隔。只能定位阶段，无法区分内部推理、请求构建、网络、服务排队或调度；不计入实测推理/输出时间。"
     case .overlap: return "同一时间存在多个活动记录；重叠部分只计一次。"
     case .firstToken: return "首个可观测 Token 出现前的等待，可能包含请求处理、网络和模型服务等待。"
     case .output: return "日志记录的回复或进度文本输出区间。"
@@ -75,6 +86,7 @@ func formattedDuration(_ milliseconds: Double) -> String {
   guard milliseconds.isFinite, milliseconds >= 0 else { return "未记录" }
   if milliseconds < 1000 { return "\(Int(milliseconds.rounded())) 毫秒" }
   if milliseconds < 60000 { return String(format: "%.1f 秒", milliseconds / 1000) }
+  guard milliseconds / 1000 < Double(Int.max) else { return "超出可显示范围" }
   let seconds = Int(milliseconds / 1000)
   if seconds < 3600 { return "\(seconds / 60) 分 \(seconds % 60) 秒" }
   return "\(seconds / 3600) 小时 \((seconds % 3600) / 60) 分"
@@ -82,14 +94,16 @@ func formattedDuration(_ milliseconds: Double) -> String {
 
 struct TurnStatisticsView: View {
   let statistics: [String: Any]
+  private let segments: [TimingSegment]
   @State private var hoveredTime: Double?
 
   private var tokens: [String: Any] { statistics.subDict("tokens") }
   private var usage: [String: Any] { tokens.subDict("usage") }
   private var timing: [String: Any] { statistics.subDict("timing") }
   private var duration: Double { (timing["span_duration_ms"] as? NSNumber)?.doubleValue ?? 0 }
-  private var segments: [TimingSegment] {
-    timing.dictArray("segments").enumerated().compactMap {
+  init(statistics: [String: Any]) {
+    self.statistics = statistics
+    segments = statistics.subDict("timing").dictArray("segments").enumerated().compactMap {
       TimingSegment(index: $0.offset, data: $0.element)
     }
   }
@@ -104,6 +118,7 @@ struct TurnStatisticsView: View {
       timelineCard
     }
     .onChange(of: duration) { _ in hoveredTime = nil }
+    .onChange(of: segments) { _ in hoveredTime = nil }
   }
 
   private var tokenCard: some View {
@@ -211,6 +226,16 @@ struct TurnStatisticsView: View {
           Text(formattedDuration(duration))
         }
         .font(.caption).foregroundColor(.secondary)
+        if let recorded = timing["recorded_duration_ms"] as? NSNumber,
+          let gap = timing["response_gap_duration_ms"] as? NSNumber,
+          let unknown = timing["unknown_duration_ms"] as? NSNumber
+        {
+          Text(
+            "明确区间 \(formattedDuration(recorded.doubleValue)) · 响应间隔 \(formattedDuration(gap.doubleValue)) · 未分类 \(formattedDuration(unknown.doubleValue))"
+          )
+          .font(.caption).foregroundColor(.secondary)
+          .help("明确区间来自日志起止或报告的耗时；响应间隔仅由事件端点界定，内部原因仍未知。")
+        }
         Group {
           if let segment = hoveredSegment {
             HStack(spacing: 8) {
@@ -249,13 +274,20 @@ struct TurnStatisticsView: View {
         }
         DisclosureGroup("统计口径与限制") {
           VStack(alignment: .leading, spacing: 8) {
-            Text("推理和回复段仅表示可观测事件；日志无法完整区分内部思考、网络等待、服务排队与调度。未分类时间保留为未知原因，不推测成思考。")
+            Text("推理和回复段仅表示可观测输出区间。响应间隔由相邻事件端点界定，内部原因仍未知，不等于模型推理或网络耗时。未分类段连阶段也无法确定。")
             Text("命令与工具段包含等待返回。包装调用不与其内部命令重复计时；不同活动重叠的部分只计一次，因此所有分类之和等于图中的总时长。")
             Text(
               "总时长优先使用日志 duration_ms，否则使用起止时间差。用户点击发送到执行器接收之间的未记录延迟不包含在内。首 Token 前区间只补充未被其他活动记录覆盖的部分。"
             )
             if (timing.int("pending_tool_count") ?? 0) > 0 {
               Text("有工具调用未记录返回，未推算其结束时间。")
+            }
+            if let count = timing.int("zero_duration_item_count"), count > 0 {
+              Text("\(count) 个活动的起止时间相同且没有可用耗时，无法还原执行或输出时长；这些点只用于定位响应间隔。")
+            }
+            let unsupported = timing.stringArray("unsupported_item_types")
+            if !unsupported.isEmpty {
+              Text("尚未识别的活动类型：" + unsupported.joined(separator: "、"))
             }
           }
           .font(.caption).foregroundColor(.secondary).padding(.top, 8)

@@ -37,6 +37,12 @@ pub struct Metrics {
     pending_calls: BTreeMap<String, PendingCall>,
     pending_items: BTreeMap<String, Option<i64>>,
     pending_legacy: BTreeMap<String, (Option<i64>, String)>,
+    // Endpoint gaps locate a phase, not its cause. Keep them separate from
+    // measured execution/streaming spans so they can never mask direct evidence.
+    model_windows: BTreeMap<String, (i64, i64)>,
+    ready_points: BTreeMap<String, i64>,
+    zero_duration_items: BTreeSet<String>,
+    unsupported_items: BTreeMap<String, String>,
     reported_duration_ms: Option<i64>,
     first_token_ms: Option<i64>,
     last_event_ms: Option<i64>,
@@ -85,6 +91,33 @@ fn completed(kind: &str) -> bool {
         "task_aborted",
     ]
     .contains(&kind)
+}
+
+fn item_category(item: &Value) -> Option<&'static str> {
+    match util::text(&item["type"])
+        .replace('_', "")
+        .to_lowercase()
+        .as_str()
+    {
+        "reasoning" => Some("reasoning"),
+        "agentmessage" => Some("output"),
+        "commandexecution" => Some("command"),
+        "mcptoolcall" | "dynamictoolcall" | "filechange" | "imageview" | "websearch" => {
+            Some("tool")
+        }
+        "contextcompaction" => Some("compaction"),
+        "extension" if util::text(&item["kind"]) == "clock.sleep" => Some("sleep"),
+        _ => None,
+    }
+}
+
+fn item_duration(item: &Value) -> Option<i64> {
+    integer(&item["durationMs"]).or_else(|| {
+        let duration = &item["duration"];
+        integer(&duration["secs"])?
+            .checked_mul(1000)?
+            .checked_add(integer(&duration["nanos"])? / 1_000_000)
+    })
 }
 
 pub fn consume(state: &mut State, row: &Value) {
@@ -187,6 +220,31 @@ pub fn consume(state: &mut State, row: &Value) {
         metrics.first_token_ms = integer(&payload["time_to_first_token_ms"]);
     }
     if row_kind == "response_item" {
+        if let Some(time) = time {
+            let identifier = payload["id"].as_str().or(call_id);
+            if let Some(identifier) = identifier {
+                if kind == "reasoning"
+                    || (kind == "message" && payload["role"] == "assistant")
+                    || ["function_call", "custom_tool_call", "local_shell_call"].contains(&kind)
+                {
+                    // Completed items later replace these point-only fallbacks
+                    // with their actual streaming boundaries, regardless of order.
+                    metrics
+                        .model_windows
+                        .entry(identifier.into())
+                        .or_insert((time, time));
+                } else if kind == "message" && payload["role"] == "user" {
+                    metrics
+                        .ready_points
+                        .insert(format!("user:{identifier}"), time);
+                }
+            }
+            if ["function_call_output", "custom_tool_call_output"].contains(&kind) {
+                if let Some(call) = call_id {
+                    metrics.ready_points.insert(format!("return:{call}"), time);
+                }
+            }
+        }
         if let Some(call) = call_id {
             if ["function_call", "custom_tool_call", "local_shell_call"].contains(&kind) {
                 if let Some(start_ms) = time {
@@ -210,29 +268,54 @@ pub fn consume(state: &mut State, row: &Value) {
     if row_kind == "event_msg" && ["item_started", "item_completed"].contains(&kind) {
         let item = &payload["item"];
         let item_kind = util::text(&item["type"]).replace('_', "").to_lowercase();
-        let category = match item_kind.as_str() {
-            "reasoning" => "reasoning",
-            "agentmessage" => "output",
-            "commandexecution" => "command",
-            "mcptoolcall" | "dynamictoolcall" | "filechange" => "tool",
-            _ => "",
-        };
         let item_id = util::text(&item["id"]);
-        if category.is_empty() || item_id.is_empty() {
+        if item_id.is_empty() {
             return;
         }
+        if item_kind == "usermessage" {
+            if let Some(time) = integer(&payload["completed_at_ms"]).or(time) {
+                metrics.ready_points.insert(format!("user:{item_id}"), time);
+            }
+            return;
+        }
+        let Some(category) = item_category(item) else {
+            metrics
+                .unsupported_items
+                .insert(item_id.into(), util::text(&item["type"]).into());
+            return;
+        };
         let start = integer(&payload["started_at_ms"]);
         if kind == "item_started" {
             metrics.pending_items.insert(item_id.into(), start.or(time));
         } else {
-            let start = start.or_else(|| metrics.pending_items.remove(item_id).flatten());
-            span(
-                metrics,
-                format!("item:{item_id}"),
-                category,
-                start,
-                integer(&payload["completed_at_ms"]).or(time),
-            );
+            // Always consume the pending entry, even when the end event provides
+            // its own start; otherwise completed items remain pending forever.
+            let pending = metrics.pending_items.remove(item_id).flatten();
+            let end = integer(&payload["completed_at_ms"]).or(time);
+            let mut start = start.or(pending);
+            if start.is_none() || start == end {
+                if let (Some(end), Some(duration)) = (end, item_duration(item)) {
+                    if duration > 0 {
+                        start = end.checked_sub(duration);
+                    }
+                }
+            }
+            if let (Some(start), Some(end)) = (start, end) {
+                if start > end {
+                    return;
+                }
+                if category == "reasoning" || category == "output" {
+                    metrics.model_windows.insert(item_id.into(), (start, end));
+                } else {
+                    metrics.ready_points.insert(format!("item:{item_id}"), end);
+                }
+                if start == end {
+                    metrics.zero_duration_items.insert(item_id.into());
+                } else {
+                    metrics.zero_duration_items.remove(item_id);
+                }
+            }
+            span(metrics, format!("item:{item_id}"), category, start, end);
         }
     }
     if row_kind == "event_msg" {
@@ -253,6 +336,9 @@ pub fn consume(state: &mut State, row: &Value) {
                     );
                 }
                 "exec_command_end" | "mcp_tool_call_end" => {
+                    if let Some(time) = time {
+                        metrics.ready_points.insert(format!("legacy:{call}"), time);
+                    }
                     if let Some((start, category)) = metrics.pending_legacy.remove(call) {
                         span(metrics, format!("legacy:{call}"), &category, start, time);
                     }
@@ -319,6 +405,33 @@ fn timeline(turn: &Turn) -> Value {
     let end = end.unwrap_or(metrics.last_event_ms.unwrap_or(start));
     let duration = (end - start).max(0);
     let mut intervals: Vec<_> = metrics.intervals.values().cloned().collect();
+    let anchors: BTreeSet<i64> = metrics
+        .ready_points
+        .values()
+        .copied()
+        .chain(metrics.model_windows.values().map(|(_, end)| *end))
+        .collect();
+    for (left, _) in metrics.model_windows.values() {
+        // Only describe gaps bounded by actual events. Never extrapolate an
+        // unfinished request, or call this model computation/network latency.
+        if *left <= start {
+            continue;
+        }
+        if metrics
+            .pending_calls
+            .values()
+            .any(|call| call.start_ms < *left)
+        {
+            continue;
+        }
+        if let Some(anchor) = anchors.range(start..*left).next_back() {
+            intervals.push(Interval {
+                category: "response_gap".into(),
+                start_ms: *anchor,
+                end_ms: *left,
+            });
+        }
+    }
     if let Some(first) = metrics.first_token_ms.filter(|v| *v > 0) {
         intervals.push(Interval {
             category: "first_token_wait".into(),
@@ -349,10 +462,15 @@ fn timeline(turn: &Turn) -> Value {
     for (boundary, changes) in events {
         if boundary > position {
             let mut categories: BTreeSet<String> = active.values().cloned().collect();
+            if categories.len() > 1 {
+                categories.remove("response_gap");
+            }
             // Wrappers include their nested commands; only independent native activities count as overlap.
             if categories.remove("tool_wrapper")
                 && !categories.contains("command")
                 && !categories.contains("tool")
+                && !categories.contains("sleep")
+                && !categories.contains("compaction")
             {
                 categories.insert("tool".into());
             }
@@ -365,6 +483,11 @@ fn timeline(turn: &Turn) -> Value {
                 categories.first().map(String::as_str).unwrap_or("unknown")
             };
             let components = json!(categories);
+            let evidence = match category {
+                "response_gap" => "event_gap",
+                "unknown" => "unavailable",
+                _ => "recorded",
+            };
             if let Some(last) = segments
                 .last_mut()
                 .filter(|s| s["category"] == category && s["components"] == components)
@@ -373,7 +496,7 @@ fn timeline(turn: &Turn) -> Value {
                 last["duration_ms"] =
                     json!(last["duration_ms"].as_i64().unwrap_or(0) + boundary - position);
             } else {
-                segments.push(json!({"start_ms":position,"end_ms":boundary,"duration_ms":boundary-position,"category":category,"components":components}));
+                segments.push(json!({"start_ms":position,"end_ms":boundary,"duration_ms":boundary-position,"category":category,"components":components,"evidence":evidence}));
             }
         }
         for (ordinal, category, begin) in changes {
@@ -392,9 +515,22 @@ fn timeline(turn: &Turn) -> Value {
             .or_default() += segment["duration_ms"].as_i64().unwrap_or(0);
     }
     let mut totals: Vec<_> = totals.into_iter().collect();
+    let gap_duration = totals
+        .iter()
+        .find(|(key, _)| key == "response_gap")
+        .map_or(0, |(_, value)| *value);
+    let unknown_duration = totals
+        .iter()
+        .find(|(key, _)| key == "unknown")
+        .map_or(0, |(_, value)| *value);
+    let unsupported_types: BTreeSet<_> = metrics.unsupported_items.values().collect();
     totals.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
     json!({"source":source,"span_duration_ms":duration,"total_duration_ms":turn.completed_at.as_ref().map(|_| duration),"first_token_ms":metrics.first_token_ms,
-        "segments":segments,"category_totals":totals.into_iter().map(|(category,duration_ms)| json!({"category":category,"duration_ms":duration_ms})).collect::<Vec<_>>(),"pending_tool_count":metrics.pending_calls.len()})
+        "segments":segments,"category_totals":totals.into_iter().map(|(category,duration_ms)| json!({"category":category,"duration_ms":duration_ms})).collect::<Vec<_>>(),"pending_tool_count":metrics.pending_calls.len(),
+        "recorded_duration_ms": duration - gap_duration - unknown_duration,
+        "response_gap_duration_ms": gap_duration, "unknown_duration_ms": unknown_duration,
+        "zero_duration_item_count": metrics.zero_duration_items.len(),
+        "unsupported_item_types": unsupported_types})
 }
 pub fn summary(turn: &Turn) -> Value {
     json!({"tokens":usage_summary(&turn.metrics),"timing":timeline(turn)})
@@ -424,4 +560,288 @@ pub fn conversation_tokens(turns: &[Turn]) -> Value {
     json!({"usage": if records.is_empty() { Value::Null } else { json!(totals) },
         "recorded_turns": records.len(), "total_turns": turns.len(),
         "partial": records.len() < turns.len() || turns.last().is_some_and(|t| t.completed_at.is_none())})
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const BASE: i64 = 1792540800000;
+
+    fn state() -> State {
+        let turn: Turn = serde_json::from_value(json!({
+            "id": "turn", "number": 1, "started_at": "2026-10-21T00:00:00Z",
+            "completed_at": "2026-10-21T00:00:10Z", "status": "completed",
+            "cwd": null, "model": null, "user_preview": "", "assistant_preview": "",
+            "tool_count": 0, "instruction_ids": [], "instruction_sources": [],
+            "metrics": Metrics::default(),
+        }))
+        .unwrap();
+        let mut state = State::default();
+        state.metadata = json!({"id": "chat"});
+        state.current_turn_id = Some("turn".into());
+        state.turns.push(turn);
+        state
+    }
+
+    fn record(state: &mut State, offset: i64, row_type: &str, payload: Value) {
+        let timestamp = chrono::DateTime::from_timestamp_millis(BASE + offset)
+            .unwrap()
+            .to_rfc3339();
+        consume(
+            state,
+            &json!({"timestamp": timestamp, "type": row_type, "payload": payload}),
+        );
+    }
+
+    fn item(state: &mut State, kind: &str, id: &str, start: i64, end: i64) {
+        record(
+            state,
+            end,
+            "event_msg",
+            json!({
+                "type": "item_completed", "item": {"type": kind, "id": id},
+                "started_at_ms": BASE + start, "completed_at_ms": BASE + end,
+            }),
+        );
+    }
+
+    fn totals(state: &State) -> BTreeMap<String, i64> {
+        timeline(&state.turns[0])["category_totals"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| {
+                (
+                    row["category"].as_str().unwrap().into(),
+                    row["duration_ms"].as_i64().unwrap(),
+                )
+            })
+            .collect()
+    }
+
+    fn assert_partition(state: &State) {
+        let timing = timeline(&state.turns[0]);
+        let duration = timing["span_duration_ms"].as_i64().unwrap();
+        let mut position = 0;
+        for segment in timing["segments"].as_array().unwrap() {
+            assert_eq!(segment["start_ms"], position);
+            position = segment["end_ms"].as_i64().unwrap();
+            assert!(segment["duration_ms"].as_i64().unwrap() > 0);
+        }
+        assert_eq!(position, duration);
+        assert_eq!(totals(state).values().sum::<i64>(), duration);
+        assert_eq!(
+            timing["recorded_duration_ms"].as_i64().unwrap()
+                + timing["response_gap_duration_ms"].as_i64().unwrap()
+                + timing["unknown_duration_ms"].as_i64().unwrap(),
+            duration
+        );
+    }
+
+    #[test]
+    fn compaction_sleep_and_image_activity_are_measured_without_wrapper_overlap() {
+        let mut state = state();
+        record(
+            &mut state,
+            1000,
+            "response_item",
+            json!({"type": "custom_tool_call", "call_id": "sleep"}),
+        );
+        record(
+            &mut state,
+            3000,
+            "event_msg",
+            json!({
+                "type": "item_completed", "item": {"type": "Extension", "kind": "clock.sleep", "id": "sleep", "durationMs": 2000},
+                "started_at_ms": BASE + 1000, "completed_at_ms": BASE + 3000,
+            }),
+        );
+        record(
+            &mut state,
+            3000,
+            "response_item",
+            json!({"type": "custom_tool_call_output", "call_id": "sleep"}),
+        );
+        item(&mut state, "ContextCompaction", "compact", 3000, 5000);
+        item(&mut state, "ImageView", "image", 5000, 5500);
+        assert_eq!(
+            totals(&state),
+            BTreeMap::from([
+                ("sleep".into(), 2000),
+                ("compaction".into(), 2000),
+                ("tool".into(), 500),
+                ("unknown".into(), 5500),
+            ])
+        );
+        assert_partition(&state);
+    }
+
+    #[test]
+    fn response_gaps_are_endpoint_evidence_and_never_override_measured_activity() {
+        let mut state = state();
+        item(&mut state, "UserMessage", "user", 100, 100);
+        item(&mut state, "Reasoning", "reason1", 1000, 2000);
+        record(
+            &mut state,
+            3000,
+            "response_item",
+            json!({"type": "custom_tool_call", "id": "call", "call_id": "call"}),
+        );
+        record(
+            &mut state,
+            5000,
+            "response_item",
+            json!({"type": "custom_tool_call_output", "call_id": "call"}),
+        );
+        item(&mut state, "Reasoning", "reason2", 6000, 6500);
+        item(&mut state, "AgentMessage", "reply", 7000, 8000);
+        assert_eq!(
+            totals(&state),
+            BTreeMap::from([
+                ("response_gap".into(), 3400),
+                ("reasoning".into(), 1500),
+                ("tool".into(), 2000),
+                ("output".into(), 1000),
+                ("unknown".into(), 2100),
+            ])
+        );
+        for segment in timeline(&state.turns[0])["segments"].as_array().unwrap() {
+            if segment["category"] == "response_gap" {
+                assert_eq!(segment["evidence"], "event_gap");
+            }
+        }
+        assert_partition(&state);
+    }
+
+    #[test]
+    fn precise_stream_boundaries_replace_point_fallbacks_in_both_event_orders() {
+        let mut first = state();
+        item(&mut first, "UserMessage", "user", 100, 100);
+        record(
+            &mut first,
+            2010,
+            "response_item",
+            json!({"type": "message", "role": "assistant", "id": "reply"}),
+        );
+        item(&mut first, "AgentMessage", "reply", 1000, 2000);
+        let mut second = state();
+        item(&mut second, "UserMessage", "user", 100, 100);
+        item(&mut second, "AgentMessage", "reply", 1000, 2000);
+        record(
+            &mut second,
+            2010,
+            "response_item",
+            json!({"type": "message", "role": "assistant", "id": "reply"}),
+        );
+        assert_eq!(timeline(&first.turns[0]), timeline(&second.turns[0]));
+        assert_eq!(totals(&first)["response_gap"], 900);
+        assert_eq!(totals(&first)["output"], 1000);
+        assert_partition(&first);
+    }
+
+    #[test]
+    fn reported_first_token_wait_has_priority_over_response_gaps() {
+        let mut state = state();
+        item(&mut state, "UserMessage", "user", 100, 100);
+        item(&mut state, "AgentMessage", "reply", 2000, 3000);
+        record(
+            &mut state,
+            10000,
+            "event_msg",
+            json!({"type": "task_complete", "time_to_first_token_ms": 1500}),
+        );
+        assert_eq!(totals(&state)["first_token_wait"], 1500);
+        assert_eq!(totals(&state)["response_gap"], 500);
+        assert_partition(&state);
+    }
+
+    #[test]
+    fn explicit_duration_recovers_collapsed_item_boundaries() {
+        let mut state = state();
+        record(
+            &mut state,
+            3000,
+            "event_msg",
+            json!({
+                "type": "item_completed", "item": {"type": "CommandExecution", "id": "cmd", "duration": {"secs": 2, "nanos": 500_000_000}},
+                "started_at_ms": BASE + 3000, "completed_at_ms": BASE + 3000,
+            }),
+        );
+        assert_eq!(totals(&state)["command"], 2500);
+        assert_eq!(timeline(&state.turns[0])["zero_duration_item_count"], 0);
+        assert_partition(&state);
+    }
+
+    #[test]
+    fn zero_duration_and_unrecognized_items_are_diagnosed_without_fabricated_spans() {
+        let mut state = state();
+        item(&mut state, "Reasoning", "point", 1000, 1000);
+        item(&mut state, "Reasoning", "point", 1000, 1000);
+        item(&mut state, "Extension", "extension", 2000, 3000);
+        assert_eq!(totals(&state), BTreeMap::from([("unknown".into(), 10000)]));
+        let timing = timeline(&state.turns[0]);
+        assert_eq!(timing["zero_duration_item_count"], 1);
+        assert_eq!(timing["unsupported_item_types"], json!(["Extension"]));
+    }
+
+    #[test]
+    fn completion_consumes_pending_start_even_with_explicit_timestamps() {
+        let mut state = state();
+        record(
+            &mut state,
+            1000,
+            "event_msg",
+            json!({"type": "item_started", "item": {"type": "Reasoning", "id": "reason"}}),
+        );
+        item(&mut state, "Reasoning", "reason", 1000, 2000);
+        assert!(state.turns[0].metrics.pending_items.is_empty());
+    }
+
+    #[test]
+    fn out_of_turn_and_independent_overlap_preserve_wall_clock_partition() {
+        let mut state = state();
+        item(&mut state, "Reasoning", "old", -1000, -500);
+        item(&mut state, "CommandExecution", "cmd", -500, 4000);
+        item(&mut state, "McpToolCall", "mcp", 2000, 3000);
+        item(&mut state, "AgentMessage", "reply", 2500, 3500);
+        assert_eq!(totals(&state)["overlap"], 1500);
+        assert_partition(&state);
+    }
+
+    #[test]
+    fn unreturned_calls_remain_unknown_and_do_not_fabricate_response_gaps() {
+        let mut state = state();
+        record(
+            &mut state,
+            1000,
+            "response_item",
+            json!({"type": "custom_tool_call", "id": "pending", "call_id": "pending"}),
+        );
+        item(&mut state, "Reasoning", "reason", 2000, 3000);
+        assert_eq!(
+            totals(&state),
+            BTreeMap::from([("reasoning".into(), 1000), ("unknown".into(), 9000)])
+        );
+        assert_eq!(timeline(&state.turns[0])["pending_tool_count"], 1);
+        state.turns[0].completed_at = None;
+        assert_eq!(timeline(&state.turns[0])["span_duration_ms"], 3000);
+        assert_eq!(timeline(&state.turns[0])["total_duration_ms"], Value::Null);
+        assert_partition(&state);
+    }
+
+    #[test]
+    fn foreign_thread_events_cannot_create_timing_evidence() {
+        let mut state = state();
+        record(
+            &mut state,
+            3000,
+            "event_msg",
+            json!({
+                "type": "item_completed", "thread_id": "child", "item": {"type": "ContextCompaction", "id": "child"},
+                "started_at_ms": BASE + 1000, "completed_at_ms": BASE + 3000,
+            }),
+        );
+        assert_eq!(totals(&state), BTreeMap::from([("unknown".into(), 10000)]));
+    }
 }

@@ -1,4 +1,5 @@
 use crate::{
+    activity::{self, Activity},
     config,
     statistics::{self, Metrics, TOKEN_FIELDS},
     util,
@@ -18,7 +19,7 @@ use std::{
 };
 use walkdir::WalkDir;
 const LIMIT: usize = 300;
-const CACHE_VERSION: u32 = 3; // Rebuild indexes that may contain foreign-thread turns.
+const CACHE_VERSION: u32 = 5; // Rebuild indexes to include per-turn tool and file activity.
 const PREVIEW: usize = 1800;
 const ORIGINATORS: [&str; 5] = [
     "Codex Desktop",
@@ -329,6 +330,8 @@ pub struct Turn {
     user_preview: String,
     assistant_preview: String,
     tool_count: u64,
+    #[serde(default)]
+    activity: Activity,
     instruction_ids: Vec<String>,
     instruction_sources: Vec<String>,
     pub metrics: Metrics,
@@ -363,6 +366,7 @@ fn turn(state: &mut State, payload: &Value, time: Option<&str>) -> usize {
         user_preview: String::new(),
         assistant_preview: String::new(),
         tool_count: 0,
+        activity: Activity::default(),
         instruction_ids: state.active_instructions.clone(),
         instruction_sources: Vec::new(),
         metrics: Metrics::new(baseline),
@@ -489,6 +493,36 @@ fn consume(state: &mut State, row: &Value) {
         },
         _ => {}
     }
+    if activity::recognizes(row) {
+        // Late tool results belong to the invoking turn, even after a new turn starts.
+        let owner = payload["call_id"]
+            .as_str()
+            .and_then(|id| state.turns.iter().position(|t| t.activity.has_call(id)))
+            .or_else(|| {
+                payload["item"]["id"].as_str().and_then(|id| {
+                    state
+                        .turns
+                        .iter()
+                        .position(|t| t.activity.has_operation(id))
+                })
+            });
+        let index = owner.unwrap_or_else(|| {
+            let metadata = &payload["internal_chat_message_metadata_passthrough"];
+            let context = if payload["turn_id"].is_string() {
+                payload
+            } else {
+                metadata
+            };
+            turn(state, context, time)
+        });
+        let cwd = state.turns[index]
+            .cwd
+            .as_deref()
+            .or_else(|| state.metadata["cwd"].as_str())
+            .map(str::to_owned);
+        activity::consume(&mut state.turns[index].activity, row, cwd.as_deref());
+        state.turns[index].tool_count = state.turns[index].activity.call_count();
+    }
     if row_kind != "response_item"
         || ![
             "message",
@@ -509,7 +543,6 @@ fn consume(state: &mut State, row: &Value) {
     }
     let index = turn(state, metadata, time);
     if kind != "message" {
-        state.turns[index].tool_count += 1;
         return;
     }
     let Some(content) = payload["content"].as_array() else {
@@ -735,6 +768,9 @@ fn inspect_detail(summary: &Value, turn_id: Option<&str>, detailed: bool) -> Res
         "user_preview":selected.user_preview,"assistant_preview":selected.assistant_preview,
         "instruction_ids":selected.instruction_ids,"instruction_sources":selected.instruction_sources});
     selected_value["statistics"] = statistics::summary(selected);
+    if detailed {
+        selected_value["activity"] = selected.activity.summary();
+    }
     if !detailed {
         for key in [
             "user_preview",
@@ -776,7 +812,13 @@ fn inspect_detail(summary: &Value, turn_id: Option<&str>, detailed: bool) -> Res
         return Ok(result);
     }
     let mut inspection = config::report(&home, Path::new(cwd), None, &[]);
-    let mut warnings = Vec::new();
+    let mut warnings: Vec<String> = inspection["warnings"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect();
     if selected.cwd.is_none() {
         warnings.push("本轮未记录 cwd；当前使用会话元数据中的目录。".into());
     }
@@ -832,6 +874,57 @@ mod tests {
         let row = json!({"type": kind, "timestamp": "2026-10-20T12:00:00Z", "payload": payload});
         consume(state, &row);
         statistics::consume(state, &row);
+    }
+
+    #[test]
+    fn activity_is_deduplicated_and_late_results_stay_in_original_turn() {
+        let mut state = State::default();
+        apply(
+            &mut state,
+            "session_meta",
+            json!({"id":"parent","cwd":"/project"}),
+        );
+        apply(
+            &mut state,
+            "event_msg",
+            json!({"type":"task_started","turn_id":"first"}),
+        );
+        let call = json!({"type":"custom_tool_call","call_id":"call","name":"exec"});
+        apply(&mut state, "response_item", call.clone());
+        apply(&mut state, "response_item", call);
+        apply(
+            &mut state,
+            "event_msg",
+            json!({"type":"item_started","item":{"id":"cmd","type":"CommandExecution","status":"in_progress","command":["sh","-c","cat a.rs"]}}),
+        );
+        apply(
+            &mut state,
+            "event_msg",
+            json!({"type":"task_started","turn_id":"second"}),
+        );
+        apply(
+            &mut state,
+            "event_msg",
+            json!({"type":"item_completed","item":{"id":"cmd","type":"CommandExecution","status":"completed","command":["sh","-c","cat a.rs"]}}),
+        );
+        apply(
+            &mut state,
+            "response_item",
+            json!({"type":"custom_tool_call_output","call_id":"call","output":"returned"}),
+        );
+        apply(
+            &mut state,
+            "event_msg",
+            json!({"type":"item_completed","thread_id":"child","item":{"id":"foreign","type":"FileChange","changes":{"secret.rs":{"type":"add"}}}}),
+        );
+        assert_eq!(state.turns[0].tool_count, 1);
+        assert_eq!(state.turns[0].activity.summary()["operation_count"], 1);
+        assert_eq!(
+            state.turns[0].activity.summary()["targets"][0]["path"],
+            "/project/a.rs"
+        );
+        assert_eq!(state.turns[1].activity.summary()["operation_count"], 0);
+        assert_eq!(state.current_turn_id.as_deref(), Some("second"));
     }
 
     #[test]
@@ -972,5 +1065,125 @@ mod tests {
                 .len(),
             2
         );
+    }
+
+    #[test]
+    fn rewritten_log_invalidates_cached_turns() {
+        let f = Fixture::new();
+        let path = f.0.join("rollout.jsonl");
+        let cache = f.0.join("cache.json");
+        fs::write(&path, log()).unwrap();
+        let previous = index_with_cache(&path, None, &cache).unwrap();
+        fs::write(&path, format!("{}\n", json!({"type":"event_msg","payload":{"type":"task_started","turn_id":"replacement"}}))).unwrap();
+        let result = index_with_cache(&path, Some(previous), &cache).unwrap();
+        assert_eq!(result.turns.len(), 1);
+        assert_eq!(result.turns[0].id, "replacement");
+    }
+
+    #[test]
+    fn legacy_user_messages_and_late_completion_preserve_latest_turn() {
+        let mut state = State::default();
+        apply(
+            &mut state,
+            "event_msg",
+            json!({"type":"user_message","message":"first"}),
+        );
+        apply(
+            &mut state,
+            "event_msg",
+            json!({"type":"user_message","message":"second"}),
+        );
+        assert_eq!(state.turns.len(), 2);
+        let first = state.turns[0].id.clone();
+        let latest = state.turns[1].id.clone();
+        apply(
+            &mut state,
+            "event_msg",
+            json!({"type":"task_complete","turn_id":first}),
+        );
+        assert_eq!(state.current_turn_id.as_deref(), Some(latest.as_str()));
+        assert_eq!(state.turns[0].status, "completed");
+        assert_eq!(state.turns[1].status, "in_progress");
+    }
+
+    #[test]
+    fn startup_developer_messages_do_not_create_turns() {
+        let mut state = State::default();
+        apply(
+            &mut state,
+            "response_item",
+            json!({"type":"message","role":"developer","content":[{"text":"startup"}]}),
+        );
+        assert!(state.turns.is_empty());
+    }
+
+    #[test]
+    fn database_catalog_filters_children_archives_and_other_clients() {
+        let f = Fixture::new();
+        let connection = Connection::open(f.0.join("state_5.sqlite")).unwrap();
+        connection.execute_batch(
+            "CREATE TABLE threads (id TEXT, title TEXT, updated_at INTEGER, archived INTEGER, source TEXT, agent_path TEXT, originator TEXT);
+             INSERT INTO threads VALUES ('main', 'Main', 3, 0, 'vscode', '/root', NULL);
+             INSERT INTO threads VALUES ('child', 'Child', 4, 0, 'subagent', '/root/child', NULL);
+             INSERT INTO threads VALUES ('archived', 'Archived', 2, 1, 'cli', NULL, NULL);
+             INSERT INTO threads VALUES ('other', 'Other', 1, 0, 'vscode', '/root', 'OtherClient');"
+        ).unwrap();
+        let ids = |archived, other| {
+            list(std::slice::from_ref(&f.0), archived, other)
+                .into_iter()
+                .map(|row| row["thread_id"].as_str().unwrap().to_owned())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(false, false), ["main"]);
+        assert_eq!(ids(true, false), ["main", "archived"]);
+        assert_eq!(ids(true, true), ["main", "archived", "other"]);
+    }
+
+    #[test]
+    fn token_records_deduplicate_responses_and_prefer_turn_snapshot() {
+        let mut state = State::default();
+        apply(&mut state, "session_meta", json!({"id":"chat"}));
+        apply(
+            &mut state,
+            "event_msg",
+            json!({"type":"task_started","turn_id":"turn"}),
+        );
+        let record = |id, amount, total| json!({"turn_id":"turn","response_id":id,"usage":{"total_tokens":amount},"turn_token_usage":{"total_tokens":total}});
+        apply(&mut state, "token_usage_record", record("one", 110, 110));
+        apply(&mut state, "token_usage_record", record("two", 210, 320));
+        apply(&mut state, "token_usage_record", record("one", 110, 110));
+        let tokens = statistics::summary(&state.turns[0])["tokens"].clone();
+        assert_eq!(tokens["source"], "turn_record");
+        assert_eq!(tokens["response_count"], 2);
+        assert_eq!(tokens["usage"]["total_tokens"], 320);
+    }
+
+    #[test]
+    fn cumulative_usage_is_differenced_and_counter_resets_remain_unknown() {
+        let mut state = State::default();
+        apply(&mut state, "session_meta", json!({"id":"chat"}));
+        let usage = |total| json!({"type":"token_count","info":{"total_token_usage":{"total_tokens":total}}});
+        // A checkpoint before the first turn is inherited usage, not new usage.
+        apply(&mut state, "event_msg", usage(100));
+        apply(
+            &mut state,
+            "event_msg",
+            json!({"type":"task_started","turn_id":"one"}),
+        );
+        apply(&mut state, "event_msg", usage(160));
+        assert_eq!(
+            statistics::summary(&state.turns[0])["tokens"]["usage"]["total_tokens"],
+            60
+        );
+        apply(
+            &mut state,
+            "event_msg",
+            json!({"type":"task_started","turn_id":"two"}),
+        );
+        apply(&mut state, "event_msg", usage(10));
+        let tokens = statistics::summary(&state.turns[1])["tokens"].clone();
+        assert!(tokens["usage"].is_null());
+        assert_eq!(tokens["source"], "unavailable");
+        assert_eq!(tokens["counter_reset"], true);
     }
 }

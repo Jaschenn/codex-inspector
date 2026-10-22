@@ -33,9 +33,9 @@ if [[ "$CARGO_OUTPUT" != /* ]]; then CARGO_OUTPUT="$PROJECT_ROOT/$CARGO_OUTPUT";
 RUST_BINARY="$CARGO_OUTPUT/$RUST_TARGET/release/codex-inspector-core"
 
 echo "==> Build native SwiftUI interface ($ARCH)"
+SWIFT_OUTPUT="$(swift build -c release --arch "$ARCH" --package-path "$ROOT_DIR" --show-bin-path)"
 swift build -c release --arch "$ARCH" --package-path "$ROOT_DIR" --only-use-versions-from-resolved-file \
   -Xswiftc -Osize -Xlinker -dead_strip
-SWIFT_OUTPUT="$(swift build -c release --arch "$ARCH" --package-path "$ROOT_DIR" --show-bin-path)"
 
 echo "==> Assemble app"
 mkdir -p "$STAGING/Contents/MacOS" "$STAGING/Contents/Resources/licenses"

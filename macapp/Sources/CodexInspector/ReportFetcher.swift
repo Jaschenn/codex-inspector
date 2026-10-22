@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import Foundation
 
@@ -11,7 +12,9 @@ final class ReportFetcher: ObservableObject {
     "generated_at": "", "process_count": 0, "processes": [], "process_errors": [],
   ]
   @Published var lastError: String?
-  @Published var lastUpdated: Date?
+  let updateClock = ReportUpdateClock()
+  let menuBarState = MenuBarState()
+  var lastUpdated: Date? { updateClock.date }
   @Published var isRefreshing = false
   @Published var isSessionLoading = false
   @Published var requestedDetailSessionID: String?
@@ -42,14 +45,38 @@ final class ReportFetcher: ObservableObject {
   private var lastStarted = Date.distantPast
   private var isRequestRunning = false
   private var needsRefresh = false
-  private let queue = DispatchQueue(label: "CodexInspector.engine", qos: .userInitiated)
+  private let automaticRefreshInterval: TimeInterval
+  private var scrollingObservers: [NSObjectProtocol] = []
+  private let scrollingViews = NSHashTable<NSScrollView>.weakObjects()
+  private let queue = DispatchQueue(
+    label: "CodexInspector.engine", qos: .userInitiated, autoreleaseFrequency: .workItem)
   private let engine: InspectorEngine
   private lazy var monitor = InspectionMonitor { [weak self] in self?.scheduleEventRefresh() }
 
   init(interval: TimeInterval = 1.0) {
+    automaticRefreshInterval = max(1.0, interval)
     engine = InspectorEngine(
       executable: Bundle.main.bundleURL
         .appendingPathComponent("Contents/MacOS/codex-inspector-core"))
+    // Publishing a live snapshot during a wheel/trackpad gesture invalidates card
+    // heights while AppKit is moving the viewport. Resume immediately on gesture end.
+    let center = NotificationCenter.default
+    scrollingObservers = [
+      center.addObserver(
+        forName: NSScrollView.willStartLiveScrollNotification, object: nil, queue: .main
+      ) { [weak self] note in
+        if let view = note.object as? NSScrollView {
+          self?.scrollingViews.add(view)
+        }
+      },
+      center.addObserver(
+        forName: NSScrollView.didEndLiveScrollNotification, object: nil, queue: .main
+      ) { [weak self] note in
+        guard let self, let view = note.object as? NSScrollView else { return }
+        self.scrollingViews.remove(view)
+        if !self.isLiveScrolling && self.needsRefresh { self.scheduleEventRefresh() }
+      },
+    ]
     refresh()
     timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
       self?.fetch(showProgress: false)
@@ -59,6 +86,7 @@ final class ReportFetcher: ObservableObject {
   }
 
   deinit {
+    for observer in scrollingObservers { NotificationCenter.default.removeObserver(observer) }
     timer?.invalidate()
     eventRefresh?.cancel()
   }
@@ -100,7 +128,7 @@ final class ReportFetcher: ObservableObject {
   private func scheduleEventRefresh() {
     // Coalesce bursts without postponing forever during continuous token output.
     guard eventRefresh == nil else { return }
-    let delay = max(0.05, 0.3 - Date().timeIntervalSince(lastStarted))
+    let delay = max(0.05, automaticRefreshInterval - Date().timeIntervalSince(lastStarted))
     let work = DispatchWorkItem { [weak self] in
       self?.eventRefresh = nil
       self?.fetch(showProgress: false)
@@ -110,6 +138,15 @@ final class ReportFetcher: ObservableObject {
   }
 
   private func fetch(showProgress: Bool) {
+    if !showProgress && isLiveScrolling {
+      needsRefresh = true
+      return
+    }
+    if !showProgress && Date().timeIntervalSince(lastStarted) < automaticRefreshInterval {
+      needsRefresh = true
+      scheduleEventRefresh()
+      return
+    }
     if isRequestRunning {
       needsRefresh = true
       if showProgress { isRefreshing = true }
@@ -120,9 +157,17 @@ final class ReportFetcher: ObservableObject {
     needsRefresh = false
     lastStarted = Date()
     let request = inspectionRequest
+    let previousReport = report
     queue.async { [weak self] in
       guard let self else { return }
-      let result = autoreleasepool { self.engine.request(request.payload) }
+      // Comparison/revision preparation also bridges Foundation collections. Drain
+      // those temporaries per refresh, and send only a publishable snapshot to main.
+      let result: Result<[String: Any]?, FetchError> = autoreleasepool {
+        self.engine.request(request.payload).map { dict in
+          reportsHaveSameContent(previousReport, dict)
+            ? nil : reportWithViewRevisions(dict, previous: previousReport)
+        }
+      }
       DispatchQueue.main.async {
         self.isRequestRunning = false
         if self.isRefreshing { self.isRefreshing = false }
@@ -130,18 +175,48 @@ final class ReportFetcher: ObservableObject {
           self.fetch(showProgress: self.isSessionLoading)
           return
         }
+        if !showProgress && self.isLiveScrolling {
+          // An in-flight read may finish after the gesture starts. Keep displaying
+          // the current snapshot; fetch fresh data when the gesture ends.
+          self.needsRefresh = true
+          return
+        }
         if self.isSessionLoading { self.isSessionLoading = false }
         switch result {
-        case .success(let dict):
-          self.report = dict
+        case .success(let prepared):
+          if let prepared {
+            self.report = prepared
+            self.monitor.watch(report: prepared)
+          }
           if self.lastError != nil { self.lastError = nil }
-          self.lastUpdated = Date()
-          self.monitor.watch(report: dict)
+          self.updateClock.date = Date()
           MemoryReclaimer.afterActivity()
         case .failure(let error): self.lastError = error.description
         }
+        self.menuBarState.update(
+          count: self.report.int("process_count") ?? 0, failed: self.lastError != nil)
         if self.needsRefresh { self.scheduleEventRefresh() }
       }
     }
+  }
+
+  private var isLiveScrolling: Bool {
+    // A closed/detached scroll view must not leave automatic refresh suspended.
+    scrollingViews.allObjects.contains { $0.window != nil }
+  }
+}
+
+/// Timestamp-only updates belong to the footer, not the entire inspection tree.
+final class ReportUpdateClock: ObservableObject {
+  @Published var date: Date?
+}
+
+final class MenuBarState: ObservableObject {
+  @Published private(set) var count = 0
+  @Published private(set) var failed = false
+
+  func update(count: Int, failed: Bool) {
+    if self.count != count { self.count = count }
+    if self.failed != failed { self.failed = failed }
   }
 }
