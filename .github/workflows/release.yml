@@ -80,6 +80,8 @@ jobs:
             同时提供独立 Rust 命令行引擎及 SHA-256 校验文件。
 
   homebrew:
+    # One-time setup: create Jaschenn/homebrew-tap and add a fine-grained PAT
+    # with Contents: Read and write as the HOMEBREW_TAP_TOKEN repository secret.
     if: startsWith(github.ref, 'refs/tags/')
     needs: publish
     runs-on: ubuntu-latest
