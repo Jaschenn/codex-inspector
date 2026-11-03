@@ -5,12 +5,15 @@
 
 macOS 原生 Codex 检查工具，采用 SwiftUI + Rust，无 Python 或浏览器运行时。
 
-0.3.0 增加本轮文件与工具活动明细，减少概览刷新及路径列表重复计算，并修复时间线状态与异常耗时边界。[性能与验证结果](docs/performance/2026-10-21-stability/RESULTS.md)。
+0.4.0 新增上下文用量页面：系统提示词与上下文窗口大小读取自本机 `codex debug models --bundled`，
+MCP 工具与 server 指令通过实际探测配置的 server 得到，其余部分（对话内容、Codex 内置工具定义）
+明确归入未逐项统计的余量，不做猜测性拆分。
 
 ## 功能
 
 - 按进程、聊天和轮次查看配置、AGENTS.md、Skills 与 MCP。
 - 菜单栏展示当前对话累计 Token、缓存命中率及最新轮次耗时分布。
+- 上下文用量页面：系统提示词、AGENTS.md、Skills 目录说明、MCP 工具/指令的 Token 分解与可用空间。
 - 配置与指令文件支持语法高亮、行号、查找替换及编辑保存。
 - Markdown 消息预览、合并配置高亮、Skill 全文 Token 估算。
 - 文件变更触发更新，每秒兜底检查；支持普通与 Zstandard 压缩日志。
