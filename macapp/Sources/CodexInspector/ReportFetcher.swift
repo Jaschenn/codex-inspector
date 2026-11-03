@@ -26,6 +26,8 @@ final class ReportFetcher: ObservableObject {
     var includeOtherSources = false
     var menuPID: Int?
     var menuSessionID: String?
+    var includeContextBudget = false
+    var probeMCPOnce = false
 
     var payload: [String: Any] {
       var result: [String: Any] = [
@@ -36,6 +38,8 @@ final class ReportFetcher: ObservableObject {
       if let turnID { result["turn_id"] = turnID }
       if let menuPID { result["menu_pid"] = menuPID }
       if let menuSessionID { result["menu_session_id"] = menuSessionID }
+      if includeContextBudget { result["context_budget"] = true }
+      if probeMCPOnce { result["probe_mcp"] = true }
       return result
     }
   }
@@ -123,6 +127,23 @@ final class ReportFetcher: ObservableObject {
     requestedDetailSessionID = report.subDict("menu_session").str("id")
   }
 
+  /// MCP servers are side-effecting external processes; spawning them to read their tool list
+  /// stays an explicit, on-demand action rather than something the 1s background poll repeats.
+  /// Spawning MCP servers for inspection is not slow per the Rust side's own ~12s cap per
+  /// server, but opening/closing the window toggles whether the (cheap) rest of the breakdown
+  /// -- system prompt, AGENTS.md, Skills -- is computed on every automatic refresh at all.
+  func setContextBudgetWindowOpen(_ open: Bool) {
+    guard open != inspectionRequest.includeContextBudget else { return }
+    inspectionRequest.includeContextBudget = open
+    refresh()
+  }
+
+  func refreshMCPTools() {
+    guard inspectionRequest.includeContextBudget else { return }
+    inspectionRequest.probeMCPOnce = true
+    refresh()
+  }
+
   func refresh() { fetch(showProgress: true) }
 
   private func scheduleEventRefresh() {
@@ -195,6 +216,10 @@ final class ReportFetcher: ObservableObject {
         }
         self.menuBarState.update(
           count: self.report.int("process_count") ?? 0, failed: self.lastError != nil)
+        // The probe already ran; clear the one-shot flag so the next automatic poll does not
+        // re-spawn every configured MCP server. `request == self.inspectionRequest` above
+        // already holds, so this cannot itself be mistaken for a pending user-driven change.
+        if request.probeMCPOnce { self.inspectionRequest.probeMCPOnce = false }
         if self.needsRefresh { self.scheduleEventRefresh() }
       }
     }

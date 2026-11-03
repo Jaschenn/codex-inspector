@@ -556,9 +556,19 @@ fn consume(state: &mut State, row: &Value) {
             .get(i)
             .and_then(Value::as_str)
             .unwrap_or("");
-        if item_kind.contains("agents_md") || text.starts_with("# AGENTS.md instructions") {
+        let category =
+            if item_kind.contains("agents_md") || text.starts_with("# AGENTS.md instructions") {
+                Some("agents_md")
+            } else if item_kind.contains("host_skills.instructions")
+                || text.starts_with("<skills_instructions>")
+            {
+                Some("skills_catalog")
+            } else {
+                None
+            };
+        if let Some(category) = category {
             let key = util::hash(text);
-            state.instructions.entry(key.clone()).or_insert_with(|| json!({"id":key,"title":util::truncate(text.lines().next().unwrap_or("指令文本"),200),"text":util::truncate(text,128000),"truncated":text.chars().count()>128000,"first_turn_number":state.turns[index].number}));
+            state.instructions.entry(key.clone()).or_insert_with(|| json!({"id":key,"category":category,"title":util::truncate(text.lines().next().unwrap_or("指令文本"),200),"text":util::truncate(text,128000),"truncated":text.chars().count()>128000,"first_turn_number":state.turns[index].number}));
             if !state.active_instructions.contains(&key) {
                 state.active_instructions.push(key.clone());
             }
@@ -1003,6 +1013,45 @@ mod tests {
                 "{kind}"
             );
         }
+    }
+
+    #[test]
+    fn agents_md_and_skills_catalog_instructions_are_tagged_by_category() {
+        let mut state = State::default();
+        apply(&mut state, "session_meta", json!({"id": "chat"}));
+        apply(
+            &mut state,
+            "event_msg",
+            json!({"type": "task_started", "turn_id": "turn"}),
+        );
+        apply(
+            &mut state,
+            "response_item",
+            json!({"type": "message", "role": "user", "content": [{"text": "# AGENTS.md instructions\nRules"}]}),
+        );
+        apply(
+            &mut state,
+            "response_item",
+            json!({
+                "type": "message", "role": "developer",
+                "content": [{"text": "<skills_instructions>\n## Skills\n..."}],
+                "internal_chat_message_metadata_passthrough": {"content_item_kinds": ["host_skills.instructions"]},
+            }),
+        );
+        let categories: std::collections::BTreeSet<_> = state
+            .instructions
+            .values()
+            .map(|i| i["category"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(state.instructions.len(), 2);
+        assert_eq!(
+            categories,
+            ["agents_md", "skills_catalog"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect()
+        );
+        assert_eq!(state.turns[0].instruction_ids.len(), 2);
     }
 
     #[test]

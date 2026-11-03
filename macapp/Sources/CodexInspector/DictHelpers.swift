@@ -10,6 +10,7 @@ extension Dictionary where Key == String, Value == Any {
     return nil
   }
   func bool(_ key: String) -> Bool? { self[key] as? Bool }
+  func double(_ key: String) -> Double? { (self[key] as? NSNumber)?.doubleValue }
   func dictArray(_ key: String) -> [[String: Any]] { (self[key] as? [[String: Any]]) ?? [] }
   func subDict(_ key: String) -> [String: Any] { (self[key] as? [String: Any]) ?? [:] }
   func stringArray(_ key: String) -> [String] { (self[key] as? [String]) ?? [] }

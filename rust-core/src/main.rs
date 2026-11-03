@@ -1,5 +1,8 @@
 mod activity;
 mod config;
+mod context_budget;
+mod mcp_probe;
+mod model_catalog;
 mod process;
 mod sessions;
 mod statistics;
@@ -40,6 +43,12 @@ struct Options {
     menu_pid: Option<u32>,
     #[arg(long)]
     menu_session_id: Option<String>,
+    /// Attach a context-window usage breakdown for the active menu conversation.
+    #[arg(long)]
+    context_budget: bool,
+    /// Also query configured MCP servers' real tool lists (slower; spawns each server).
+    #[arg(long)]
+    probe_mcp: bool,
 }
 
 fn report(options: &Options) -> Result<Value, String> {
@@ -162,10 +171,59 @@ fn report(options: &Options) -> Result<Value, String> {
             result["menu_session"] = selected
                 .map(|s| sessions::menu(s).unwrap_or_else(|e| json!({"error":e})))
                 .unwrap_or(Value::Null);
+            if options.context_budget {
+                result["menu_context_budget"] = selected
+                    .map(|s| context_budget_for(s, process, options.probe_mcp))
+                    .unwrap_or(Value::Null);
+            }
         }
     }
     phase("menu summary");
     Ok(result)
+}
+
+fn context_budget_for(session: &Value, process: &Value, probe_mcp: bool) -> Value {
+    let detail = match sessions::inspect(session, None) {
+        Ok(detail) => detail,
+        Err(error) => return json!({"available": false, "reason": error}),
+    };
+    if detail["error"].is_string() {
+        return json!({"available": false, "reason": detail["error"]});
+    }
+    let model = detail["selected_turn"]["model"].as_str().map(str::to_owned);
+    let active_tokens =
+        detail["selected_turn"]["statistics"]["tokens"]["usage"]["total_tokens"].as_i64();
+    let recorded_instructions = detail["recorded_instructions"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let binary_hint = process["cmdline"]
+        .as_str()
+        .and_then(shlex::split)
+        .and_then(|tokens| tokens.into_iter().next())
+        .filter(|first| first.starts_with('/'));
+    let servers = process["mcp_servers"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    // A fresh probe is explicit (user action); otherwise reuse a recent one so the automatic
+    // 1s poll does not silently re-spawn every configured MCP server.
+    let (mcp_results, mcp_result_age_secs) = if probe_mcp {
+        (Some(mcp_probe::probe(&servers)), Some(0))
+    } else {
+        match mcp_probe::cached(&servers) {
+            Some((results, age)) => (Some(results), Some(age.as_secs() as i64)),
+            None => (None, None),
+        }
+    };
+    context_budget::build(
+        model.as_deref(),
+        active_tokens,
+        &recorded_instructions,
+        mcp_results.as_deref(),
+        mcp_result_age_secs,
+        binary_hint.as_deref(),
+    )
 }
 
 fn run() -> Result<(), String> {

@@ -18,6 +18,11 @@ struct CodexInspectorApp: App {
     }
     .windowResizability(.contentSize)
 
+    Window("上下文用量", id: "context_budget") {
+      ContextBudgetView(fetcher: fetcher)
+    }
+    .windowResizability(.contentSize)
+
     MenuBarExtra {
       MenuContentView(fetcher: fetcher)
     } label: {

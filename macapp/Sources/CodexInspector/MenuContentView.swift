@@ -39,6 +39,13 @@ struct MenuContentView: View {
         }
         .buttonStyle(.plain).help("立即刷新")
         Button {
+          openWindow(id: "context_budget")
+          NSApplication.shared.activate(ignoringOtherApps: true)
+        } label: {
+          Image(systemName: "chart.bar.doc.horizontal")
+        }
+        .buttonStyle(.plain).help("查看上下文用量")
+        Button {
           openDetail()
         } label: {
           Image(systemName: "macwindow")
