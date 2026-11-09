@@ -108,14 +108,20 @@ struct MenuContentView: View {
     }
   }
 
+  private func processTitle(_ pid: Int?) -> String {
+    guard let pid else { return "—" }
+    let label = processes.first { $0.int("pid") == pid }?.str("label") ?? "Codex"
+    return "\(label) · \(String(pid))"
+  }
+
   private var objectSelector: some View {
     VStack(alignment: .leading, spacing: 8) {
       HStack {
         Text("进程").font(.system(size: 12)).foregroundColor(.secondary)
         Picker("进程", selection: selectedPID) {
-          Text("自动 · PID \(String(fetcher.report.int("menu_pid") ?? 0))").tag(Int?.none)
+          Text("自动 · \(processTitle(fetcher.report.int("menu_pid")))").tag(Int?.none)
           ForEach(processes.compactMap { $0.int("pid") }, id: \.self) { pid in
-            Text("PID \(String(pid))").tag(Optional(pid))
+            Text(processTitle(pid)).tag(Optional(pid))
           }
         }
         .labelsHidden().frame(maxWidth: .infinity)

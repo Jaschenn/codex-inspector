@@ -9,9 +9,206 @@ use std::{
 
 pub struct RawProcess {
     pub pid: u32,
+    ppid: u32,
     user: String,
     etime: String,
     cmdline: String,
+}
+
+/// What a `codex` process is to the user. One Codex Desktop window or one CLI session is one
+/// entry; shared background daemons are reported separately instead of as extra "processes".
+#[derive(Debug, PartialEq, Eq)]
+pub enum Kind {
+    /// app-server launched by the ChatGPT / Codex desktop app.
+    Desktop,
+    /// app-server launched by another GUI app (VS Code, Cursor, ...): an editor extension.
+    Extension,
+    /// Interactive TUI (`codex`, `codex resume`, ...).
+    Cli,
+    /// `codex exec`: a non-interactive run.
+    Exec,
+    /// `codex mcp-server`.
+    McpServer,
+    /// An app-server with no GUI parent (started by hand or by a script).
+    AppServer,
+    /// The shared, self-managed app-server daemon and its supervisor.
+    Daemon,
+}
+
+impl Kind {
+    pub fn key(&self) -> &'static str {
+        match self {
+            Kind::Desktop => "desktop",
+            Kind::Extension => "extension",
+            Kind::Cli => "cli",
+            Kind::Exec => "exec",
+            Kind::McpServer => "mcp_server",
+            Kind::AppServer => "app_server",
+            Kind::Daemon => "daemon",
+        }
+    }
+}
+
+/// Flags of the top-level `codex` command that take a separate value argument.
+const VALUE_FLAGS: [&str; 16] = [
+    "-c",
+    "--config",
+    "-p",
+    "--profile",
+    "-C",
+    "--cd",
+    "-m",
+    "--model",
+    "-s",
+    "--sandbox",
+    "-a",
+    "--ask-for-approval",
+    "-i",
+    "--image",
+    "--enable",
+    "--disable",
+];
+
+fn subcommand(arguments: &[String]) -> (Option<&str>, &[String]) {
+    let mut i = 1;
+    while i < arguments.len() {
+        let token = arguments[i].as_str();
+        if token == "--" {
+            return (None, &[]);
+        }
+        if token.starts_with('-') {
+            i += if VALUE_FLAGS.contains(&token) { 2 } else { 1 };
+            continue;
+        }
+        return (Some(token), &arguments[i + 1..]);
+    }
+    (None, &[])
+}
+
+/// The outermost `.app` bundle name in an app's executable path, so helpers nested inside an
+/// app (`Visual Studio Code.app/.../Code Helper.app`) report the app the user actually opened.
+/// Only bundle executables count: tools that merely ship inside a bundle (Xcode's
+/// `Contents/Developer/usr/bin/python3`, `git`), nor bundles inside a framework (Xcode's
+/// `Python3.framework/.../Python.app`, Electron framework helpers), make that the launching app;
+/// the walk continues to their parent instead.
+fn bundle_name(path: &str) -> Option<String> {
+    if !path.contains(".app/Contents/MacOS/") || path.contains(".framework/") {
+        return None;
+    }
+    let end = path.find(".app/")?;
+    let start = path[..end].rfind('/').map_or(0, |i| i + 1);
+    Some(path[start..end].to_owned())
+}
+
+pub fn classify(arguments: &[String], host_app: Option<&str>) -> Kind {
+    let (command, rest) = subcommand(arguments);
+    match command {
+        Some("exec" | "e") => Kind::Exec,
+        Some("mcp-server") => Kind::McpServer,
+        Some("app-server") => {
+            if rest.first().is_some_and(|a| a == "daemon")
+                || rest.iter().any(|a| a == "--managed-daemon")
+            {
+                Kind::Daemon
+            } else {
+                match host_app.map(str::to_ascii_lowercase) {
+                    Some(app) if app.contains("chatgpt") || app.contains("codex") => Kind::Desktop,
+                    Some(_) => Kind::Extension,
+                    None => Kind::AppServer,
+                }
+            }
+        }
+        _ => Kind::Cli,
+    }
+}
+
+fn label(kind: &Kind, host_app: Option<&str>) -> String {
+    let host = host_app.map(|app| format!(" · {app}")).unwrap_or_default();
+    match kind {
+        Kind::Desktop => format!("Codex 桌面版{host}"),
+        Kind::Extension => format!("{} 扩展", host_app.unwrap_or("编辑器")),
+        Kind::Cli => format!("Codex CLI{host}"),
+        Kind::Exec => format!("codex exec{host}"),
+        Kind::McpServer => format!("MCP Server{host}"),
+        Kind::AppServer => "App Server".into(),
+        Kind::Daemon => "后台 App Server".into(),
+    }
+}
+
+impl RawProcess {
+    /// The GUI app this process was launched from (desktop app, editor, terminal), if any.
+    fn host_app(&self) -> Option<String> {
+        let mut pid = self.ppid;
+        for _ in 0..32 {
+            if pid <= 1 {
+                return None;
+            }
+            if let Some(name) = executable_path(pid).as_deref().and_then(bundle_name) {
+                return Some(name);
+            }
+            pid = parent_pid(pid)?;
+        }
+        None
+    }
+
+    pub fn kind_and_host(&self) -> (Kind, Option<String>) {
+        let arguments = shlex::split(&self.cmdline)
+            .unwrap_or_else(|| self.cmdline.split_whitespace().map(str::to_owned).collect());
+        let host = self.host_app();
+        (classify(&arguments, host.as_deref()), host)
+    }
+
+    pub fn summary(&self) -> Value {
+        let (kind, host) = self.kind_and_host();
+        json!({"pid": self.pid, "kind": kind.key(), "label": label(&kind, host.as_deref()),
+            "host_app": host, "cmdline": self.cmdline, "etime": self.etime})
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn bsd_info(pid: u32) -> Option<libc::proc_bsdinfo> {
+    let size = std::mem::size_of::<libc::proc_bsdinfo>();
+    let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::zeroed();
+    let length = unsafe {
+        libc::proc_pidinfo(
+            i32::try_from(pid).ok()?,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            info.as_mut_ptr().cast(),
+            size as i32,
+        )
+    };
+    (length as usize == size).then(|| unsafe { info.assume_init() })
+}
+#[cfg(target_os = "macos")]
+fn parent_pid(pid: u32) -> Option<u32> {
+    bsd_info(pid).map(|info| info.pbi_ppid)
+}
+#[cfg(target_os = "macos")]
+fn executable_path(pid: u32) -> Option<String> {
+    let mut buffer = vec![0_u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
+    let length = unsafe {
+        libc::proc_pidpath(
+            i32::try_from(pid).ok()?,
+            buffer.as_mut_ptr().cast(),
+            buffer.len() as u32,
+        )
+    };
+    if length <= 0 {
+        return None;
+    }
+    buffer.truncate(length as usize);
+    String::from_utf8(buffer).ok()
+}
+#[cfg(not(target_os = "macos"))]
+fn parent_pid(pid: u32) -> Option<u32> {
+    let (_, out, _) = util::command("/bin/ps", &["-o", "ppid=", "-p", &pid.to_string()]).ok()?;
+    out.trim().parse().ok()
+}
+#[cfg(not(target_os = "macos"))]
+fn executable_path(pid: u32) -> Option<String> {
+    let (_, out, _) = util::command("/bin/ps", &["-o", "comm=", "-p", &pid.to_string()]).ok()?;
+    Some(out.trim().to_owned()).filter(|s| !s.is_empty())
 }
 #[derive(Default, Serialize)]
 struct Overrides {
@@ -132,17 +329,19 @@ pub fn scan() -> Result<Vec<RawProcess>, String> {
     if let Some(processes) = native_scan() {
         return Ok(processes);
     }
-    let (ok, output, error) = util::command("/bin/ps", &["-axo", "pid=,user=,etime=,command="])?;
+    let (ok, output, error) =
+        util::command("/bin/ps", &["-axo", "pid=,ppid=,user=,etime=,command="])?;
     if !ok {
         return Err(format!("无法列出进程: {error}"));
     }
-    let pattern = Regex::new(r"^\s*(\d+)\s+(\S+)\s+(\S+)\s+(.*)$").map_err(|e| e.to_string())?;
+    let pattern =
+        Regex::new(r"^\s*(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s+(.*)$").map_err(|e| e.to_string())?;
     let mut result = Vec::new();
     for line in output.lines() {
         let Some(caps) = pattern.captures(line) else {
             continue;
         };
-        let cmd = &caps[4];
+        let cmd = &caps[5];
         let first = cmd.split_whitespace().next().unwrap_or("");
         if Path::new(first)
             .file_name()
@@ -151,8 +350,9 @@ pub fn scan() -> Result<Vec<RawProcess>, String> {
             if let Ok(pid) = caps[1].parse() {
                 result.push(RawProcess {
                     pid,
-                    user: caps[2].into(),
-                    etime: caps[3].into(),
+                    ppid: caps[2].parse().unwrap_or(0),
+                    user: caps[3].into(),
+                    etime: caps[4].into(),
                     cmdline: cmd.into(),
                 });
             }
@@ -386,6 +586,10 @@ pub fn inspect(process: &RawProcess) -> Result<Value, String> {
         warnings.push("该项目是 git 仓库,但全局配置没有 trust 记录，项目层配置可能不会生效".into());
     }
     report["pid"] = json!(process.pid);
+    let summary = process.summary();
+    for key in ["kind", "label", "host_app"] {
+        report[key] = summary[key].clone();
+    }
     report["user"] = json!(process.user);
     report["etime"] = json!(process.etime);
     report["cmdline"] = json!(process.cmdline);
@@ -464,21 +668,7 @@ fn native_scan() -> Option<Vec<RawProcess>> {
         {
             continue;
         }
-        let size = std::mem::size_of::<libc::proc_bsdinfo>();
-        let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::zeroed();
-        let length = unsafe {
-            libc::proc_pidinfo(
-                pid,
-                libc::PROC_PIDTBSDINFO,
-                0,
-                info.as_mut_ptr().cast(),
-                size as i32,
-            )
-        };
-        if length as usize != size {
-            return None;
-        }
-        let info = unsafe { info.assume_init() };
+        let info = bsd_info(pid as u32)?;
         let owner = unsafe { libc::getpwuid(info.pbi_uid) };
         let user = if owner.is_null() {
             info.pbi_uid.to_string()
@@ -514,6 +704,7 @@ fn native_scan() -> Option<Vec<RawProcess>> {
             .join(" ");
         result.push(RawProcess {
             pid: pid as u32,
+            ppid: info.pbi_ppid,
             user,
             etime,
             cmdline,
@@ -592,6 +783,56 @@ mod tests {
         assert_eq!(
             overrides(&command).c_overrides,
             vec![("model".into(), json!("with spaces"))]
+        );
+    }
+
+    #[test]
+    fn processes_are_classified_by_subcommand_and_launching_app() {
+        let args = |line: &str| shlex::split(line).unwrap();
+        let desktop = args(
+            "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex -c 'features.code_mode_host=true' app-server --analytics-default-enabled",
+        );
+        assert_eq!(classify(&desktop, Some("ChatGPT")), Kind::Desktop);
+        assert_eq!(
+            classify(&desktop, Some("Visual Studio Code")),
+            Kind::Extension
+        );
+        assert_eq!(classify(&desktop, None), Kind::AppServer);
+        assert_eq!(
+            classify(
+                &args("/x/bin/codex app-server daemon pid-update-loop"),
+                None
+            ),
+            Kind::Daemon
+        );
+        assert_eq!(
+            classify(
+                &args("/x/bin/codex app-server --listen unix:// --managed-daemon"),
+                None
+            ),
+            Kind::Daemon
+        );
+        assert_eq!(classify(&args("codex"), Some("iTerm2")), Kind::Cli);
+        assert_eq!(
+            classify(&args("codex -m gpt-5.5 resume --last"), None),
+            Kind::Cli
+        );
+        assert_eq!(classify(&args("codex -C /tmp exec 'hi'"), None), Kind::Exec);
+        assert_eq!(classify(&args("codex mcp-server"), None), Kind::McpServer);
+        assert_eq!(
+            bundle_name("/Applications/Visual Studio Code.app/Contents/Frameworks/Code Helper.app/Contents/MacOS/Code Helper").as_deref(),
+            Some("Visual Studio Code")
+        );
+        assert_eq!(bundle_name("/usr/bin/tmux"), None);
+        assert_eq!(
+            bundle_name("/Applications/Xcode.app/Contents/Developer/usr/bin/python3"),
+            None
+        );
+        assert_eq!(
+            bundle_name(
+                "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python"
+            ),
+            None
         );
     }
 }

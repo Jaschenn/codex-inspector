@@ -66,8 +66,15 @@ fn report(options: &Options) -> Result<Value, String> {
     phase("process scan");
     let mut reports = Vec::new();
     let mut errors = Vec::new();
+    let mut background = Vec::new();
     for process in processes {
         if options.pid.is_some_and(|pid| process.pid != pid) {
+            continue;
+        }
+        // Shared daemons serve other clients; showing them as extra "Codex processes" makes one
+        // open desktop app look like three. They are listed, not inspected.
+        if options.pid.is_none() && process.kind_and_host().0 == process::Kind::Daemon {
+            background.push(process.summary());
             continue;
         }
         match process::inspect(&process) {
@@ -85,7 +92,7 @@ fn report(options: &Options) -> Result<Value, String> {
     );
     let mut result = json!({
         "generated_at": chrono::Local::now().to_rfc3339(), "process_count": reports.len(),
-        "processes": reports, "process_errors": errors,
+        "processes": reports, "process_errors": errors, "background_processes": background,
     });
     if options.sessions {
         let catalog = sessions::list(

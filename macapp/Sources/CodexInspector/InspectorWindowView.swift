@@ -72,7 +72,7 @@ struct InspectorWindowView: View {
     processes.filter { process in
       objectSearchText.isEmpty
         || String(process.int("pid") ?? 0).contains(objectSearchText)
-        || [process.str("cwd"), process.str("cmdline")].compactMap { $0 }
+        || [process.str("label"), process.str("cwd"), process.str("cmdline")].compactMap { $0 }
           .contains { $0.localizedCaseInsensitiveContains(objectSearchText) }
     }
   }
@@ -244,8 +244,10 @@ struct InspectorWindowView: View {
           VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
               Circle().fill(trust.color).frame(width: 6, height: 6).help(trust.explanation)
-              Text("PID \(String(pid))").font(.system(size: 13, weight: .medium)).monospacedDigit()
+              Text(process.str("label") ?? "Codex").font(.system(size: 13, weight: .medium))
+                .lineLimit(1)
               Spacer()
+              Text(String(pid)).font(.system(size: 11)).foregroundColor(.secondary).monospacedDigit()
             }
             Text(shortenPath(process.str("cwd")))
               .font(.system(size: 12)).foregroundColor(.secondary)
@@ -257,11 +259,21 @@ struct InspectorWindowView: View {
           .tag(pid)
           .help(process.str("cmdline") ?? "Codex 进程")
           .accessibilityElement(children: .ignore)
-          .accessibilityLabel("选择进程 PID \(String(pid))")
+          .accessibilityLabel("选择 \(process.str("label") ?? "Codex") PID \(String(pid))")
         }
       }
     }
     .listStyle(.sidebar)
+    .safeAreaInset(edge: .bottom) {
+      let background = fetcher.report.dictArray("background_processes")
+      if !background.isEmpty {
+        Text("另有 \(background.count) 个后台 App Server 进程（共享守护进程）未列出")
+          .font(.system(size: 11)).foregroundColor(.secondary)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .padding(.horizontal, 12).padding(.vertical, 8)
+          .help(background.compactMap { "PID \(String($0.int("pid") ?? 0)) · \($0.str("cmdline") ?? "")" }.joined(separator: "\n"))
+      }
+    }
     .overlay {
       if filteredProcesses.isEmpty {
         objectListEmpty(
@@ -539,11 +551,11 @@ struct InspectorWindowView: View {
       VStack(alignment: .leading, spacing: 16) {
         HStack(alignment: .top, spacing: 16) {
           VStack(alignment: .leading, spacing: 6) {
-            Text("PID \(String(proc.int("pid") ?? 0))").font(.system(size: 20, weight: .semibold))
+            Text(proc.str("label") ?? "Codex").font(.system(size: 20, weight: .semibold))
             Text(shortenPath(proc.str("cwd")))
               .font(.system(size: 13)).foregroundColor(.secondary)
               .lineLimit(1).truncationMode(.middle).textSelection(.enabled)
-            Text("\(proc.str("user") ?? "—") · 运行 \(proc.str("etime") ?? "—")")
+            Text("PID \(String(proc.int("pid") ?? 0)) · \(proc.str("user") ?? "—") · 运行 \(proc.str("etime") ?? "—")")
               .font(.system(size: 12)).foregroundColor(.secondary).monospacedDigit()
           }
           Spacer()
