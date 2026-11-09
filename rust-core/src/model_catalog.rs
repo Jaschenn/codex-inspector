@@ -3,7 +3,7 @@
 // prints the bundled catalog, including each model's literal `base_instructions` system prompt),
 // so this reads them from the user's installed Codex CLI instead of vendoring a copy that would
 // drift from whatever version is actually running.
-use crate::{tokens, util};
+use crate::util;
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -112,9 +112,9 @@ fn resolve(hint: Option<&str>) -> CatalogResult {
     result
 }
 
-/// Looks up a model's bundled catalog entry by slug, augmented with a local token estimate
-/// of its exact system prompt. Returns an error only when the `codex` CLI cannot be run at all;
-/// an unrecognised slug is reported in the `matched` field instead of failing outright.
+/// Looks up a model's bundled catalog entry by slug, including its exact system prompt text.
+/// Returns an error only when the `codex` CLI cannot be run at all; an unrecognised slug is
+/// reported in the `matched` field instead of failing outright.
 pub fn lookup(binary_hint: Option<&str>, slug: &str) -> Result<Value, String> {
     let catalog = resolve(binary_hint)?;
     let entry = catalog
@@ -127,24 +127,16 @@ pub fn lookup(binary_hint: Option<&str>, slug: &str) -> Result<Value, String> {
             "matched": false, "slug": slug,
         }));
     };
-    let base_instructions = entry["base_instructions"].as_str().unwrap_or("");
-    let (count, encoding, method) = tokens::estimate(base_instructions);
     let context_window = entry["context_window"]
         .as_i64()
         .or_else(|| entry["max_context_window"].as_i64());
     let percent = entry["effective_context_window_percent"]
         .as_i64()
         .unwrap_or(95);
-    let usable_context_window = context_window.map(|w| w.saturating_mul(percent) / 100);
     Ok(json!({
         "source_binary": catalog.binary, "source_version": catalog.version, "matched": true,
-        "slug": slug, "context_window": context_window,
-        "max_context_window": entry["max_context_window"],
-        "effective_context_window_percent": percent,
-        "usable_context_window": usable_context_window,
-        "auto_compact_token_limit": entry["auto_compact_token_limit"],
-        "system_prompt_token_count": count, "system_prompt_token_encoding": encoding,
-        "system_prompt_token_method": method,
+        "slug": slug, "base_instructions": entry["base_instructions"],
+        "usable_context_window": context_window.map(|w| w.saturating_mul(percent) / 100),
     }))
 }
 
@@ -165,7 +157,7 @@ mod tests {
         let slug = sample["slug"].as_str().unwrap().to_owned();
         let result = lookup(None, &slug).expect("a resolvable codex binary must not then fail");
         assert_eq!(result["matched"], true);
-        assert!(result["system_prompt_token_count"].as_u64().unwrap() > 0);
+        assert!(!result["base_instructions"].as_str().unwrap().is_empty());
 
         let miss = lookup(None, "definitely-not-a-real-model-slug").unwrap();
         assert_eq!(miss["matched"], false);

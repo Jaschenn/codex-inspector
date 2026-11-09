@@ -4,6 +4,11 @@ import SwiftUI
 struct CodexInspectorApp: App {
   @StateObject private var fetcher = ReportFetcher()
 
+  init() {
+    // Writing to an engine that just exited must surface as an error, not kill the app.
+    signal(SIGPIPE, SIG_IGN)
+  }
+
   var body: some Scene {
     Window("Codex Inspector", id: "inspector") {
       InspectorWindowView(fetcher: fetcher)

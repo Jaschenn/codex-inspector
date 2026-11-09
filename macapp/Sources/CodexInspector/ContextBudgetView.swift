@@ -32,6 +32,11 @@ struct ContextBudgetView: View {
   private var activeTokens: Int? { budget.int("active_context_tokens") }
   private var freeSpace: Int? { budget.int("free_space_tokens") }
   private var percentUsed: Double? { budget.double("percent_used") }
+  private var modelLine: String {
+    guard let model = budget.str("model") else { return "等待关联聊天" }
+    guard let encoding = budget.str("token_encoding") else { return model }
+    return "\(model) · \(encoding) 分词"
+  }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
@@ -72,7 +77,7 @@ struct ContextBudgetView: View {
         .font(.system(size: 18)).foregroundColor(.accentColor)
       VStack(alignment: .leading, spacing: 2) {
         Text("上下文用量").font(.system(size: 14, weight: .semibold))
-        Text(budget.str("model") ?? "等待关联聊天")
+        Text(modelLine)
           .font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1)
       }
       Spacer()
@@ -111,14 +116,16 @@ struct ContextBudgetView: View {
         }
       }
       GeometryReader { geometry in
+        // Segments can exceed the window (e.g. just before compaction); scale so they still fit.
+        let scale = max(usableWindow ?? 0, components.reduce(0) { $0 + max(0, $1.int("tokens") ?? 0) })
         HStack(spacing: 1.5) {
           ForEach(Array(components.enumerated()), id: \.offset) { _, component in
             let tokens = component.int("tokens") ?? 0
-            if tokens > 0, let usableWindow, usableWindow > 0 {
+            if tokens > 0, usableWindow != nil, scale > 0 {
               let category = ContextBudgetCategory(rawValue: component.str("category") ?? "")
               RoundedRectangle(cornerRadius: 2)
                 .fill(category?.color ?? .gray)
-                .frame(width: max(2, geometry.size.width * CGFloat(tokens) / CGFloat(usableWindow)))
+                .frame(width: max(2, geometry.size.width * CGFloat(tokens) / CGFloat(scale)))
             }
           }
           Spacer(minLength: 0)
@@ -232,7 +239,7 @@ struct ContextBudgetView: View {
 
   private var footer: some View {
     HStack {
-      Text("系统提示词/上下文窗口来自本机 codex debug models；MCP 工具来自实际探测")
+      Text("系统提示词/上下文窗口来自会话日志（旧日志回退到 codex debug models）；MCP 工具来自实际探测")
         .font(.system(size: 10.5)).foregroundColor(.secondary)
       Spacer()
     }

@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
     io::{BufRead, BufReader, Write},
+    os::unix::process::CommandExt,
     process::{Child, Command, Stdio},
     sync::{Mutex, OnceLock, mpsc},
     thread,
@@ -30,6 +31,17 @@ fn send(child: &mut Child, message: &Value) -> Result<(), String> {
         .ok_or("stdin unavailable")?
         .write_all(line.as_bytes())
         .map_err(|e| e.to_string())
+}
+
+/// Kills the server's whole process group (npx/uvx/sh wrappers spawn grandchildren that would
+/// otherwise keep stdout open and outlive the probe) and reaps it so no zombie remains in the
+/// long-lived `--serve` engine.
+fn terminate(child: &mut Child) {
+    if let Ok(pid) = i32::try_from(child.id()) {
+        unsafe { libc::kill(-pid, libc::SIGKILL) };
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 /// Reads lines from the child's stdout on a background thread so a server that never responds
@@ -67,31 +79,46 @@ fn tool_definition_tokens(server: &str, tool: &Value) -> (Option<usize>, Value) 
 /// config.toml (some use a relative `command` that only resolves under their configured `cwd`).
 /// `timeout` honors a server's own `startup_timeout_sec`, if configured, capped at `MAX_TIMEOUT`
 /// so one slow-starting server cannot stall the whole probe.
-fn probe_one(
-    name: &str,
-    command: &str,
-    args: &[String],
-    env: &BTreeMap<String, String>,
-    cwd: Option<&str>,
+struct Launch<'a> {
+    command: &'a str,
+    args: &'a [String],
+    /// The Codex process's environment; empty means "inherit this engine's".
+    base_env: &'a BTreeMap<String, String>,
+    env: &'a BTreeMap<String, String>,
+    cwd: Option<&'a str>,
     timeout: Duration,
-) -> Value {
-    let deadline = Instant::now() + timeout;
-    let mut command_builder = Command::new(command);
-    command_builder.args(args).envs(env);
-    if let Some(cwd) = cwd {
+}
+
+fn probe_one(name: &str, launch: &Launch) -> Value {
+    let deadline = Instant::now() + launch.timeout;
+    // A Finder-launched app has launchd's minimal PATH; resolve bare commands (npx, uvx) with
+    // the Codex process's PATH and run them in its environment.
+    let program = launch
+        .base_env
+        .get("PATH")
+        .and_then(|path| resolve_in_path(launch.command, path))
+        .unwrap_or_else(|| launch.command.into());
+    let mut command_builder = Command::new(program);
+    if !launch.base_env.is_empty() {
+        command_builder.env_clear().envs(launch.base_env);
+    }
+    command_builder.args(launch.args).envs(launch.env);
+    if let Some(cwd) = launch.cwd {
         command_builder.current_dir(cwd);
     }
     let mut child = match command_builder
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        // Never read; a piped stderr would block a chatty server once the pipe buffer fills.
+        .stderr(Stdio::null())
+        .process_group(0)
         .spawn()
     {
         Ok(child) => child,
         Err(error) => return json!({"name": name, "status": "error", "error": error.to_string()}),
     };
     let Some(stdout) = child.stdout.take() else {
-        let _ = child.kill();
+        terminate(&mut child);
         return json!({"name": name, "status": "error", "error": "stdout unavailable"});
     };
     let (tx, rx) = mpsc::channel();
@@ -114,15 +141,15 @@ fn probe_one(
         }),
     );
     if let Err(error) = init_sent {
-        let _ = child.kill();
+        terminate(&mut child);
         return json!({"name": name, "status": "error", "error": error});
     }
     let Some(init_response) = read_response(&rx, deadline, 1) else {
-        let _ = child.kill();
+        terminate(&mut child);
         return json!({"name": name, "status": "timeout", "error": "initialize 未在超时内响应"});
     };
     if let Some(error) = init_response.get("error") {
-        let _ = child.kill();
+        terminate(&mut child);
         return json!({"name": name, "status": "error", "error": error});
     }
     let instructions = init_response["result"]["instructions"]
@@ -140,12 +167,11 @@ fn probe_one(
         )
     });
     if let Err(error) = tools_sent {
-        let _ = child.kill();
+        terminate(&mut child);
         return json!({"name": name, "status": "error", "error": error});
     }
     let tools_response = read_response(&rx, deadline, 2);
-    let _ = child.kill();
-    let _ = child.wait();
+    terminate(&mut child);
 
     let Some(tools_response) = tools_response else {
         return json!({
@@ -198,21 +224,71 @@ fn probe_entry(entry: &Value) -> Value {
         .flatten()
         .filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_owned())))
         .collect();
-    let cwd = raw["cwd"].as_str();
+    let base_env: BTreeMap<String, String> = entry["base_env"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_owned())))
+        .collect();
     let timeout = raw["startup_timeout_sec"]
         .as_f64()
-        .map(Duration::from_secs_f64)
-        .map_or(DEFAULT_TIMEOUT, |requested| requested.min(MAX_TIMEOUT));
-    probe_one(name, command, &args, &env, cwd, timeout)
+        .filter(|s| s.is_finite() && *s > 0.0)
+        .map_or(DEFAULT_TIMEOUT, |s| {
+            Duration::from_secs_f64(s).min(MAX_TIMEOUT)
+        });
+    let launch = Launch {
+        command,
+        args: &args,
+        base_env: &base_env,
+        env: &env,
+        cwd: raw["cwd"].as_str(),
+        timeout,
+    };
+    filter_tools(probe_one(name, &launch), raw)
 }
 
-/// `servers` entries look like `{"name": .., "raw": {"command": .., "args": [..], "env": {..}}}`,
-/// matching `config::report`'s `mcp_servers` shape. Probed in parallel so total wall time tracks
-/// the slowest single server, not their sum -- staying well under the host's 20s hard timeout
-/// for the whole (persistent, cache-owning) engine process even with several configured servers.
-pub fn probe(servers: &[Value]) -> Vec<Value> {
+fn resolve_in_path(command: &str, path: &str) -> Option<std::path::PathBuf> {
+    if command.contains('/') {
+        return None;
+    }
+    path.split(':')
+        .map(|dir| std::path::Path::new(dir).join(command))
+        .find(|candidate| candidate.is_file())
+}
+
+/// Applies the server's `enabled_tools` allowlist and `disabled_tools` denylist, as Codex does,
+/// so filtered-out tools are not counted as context.
+fn filter_tools(mut result: Value, raw: &Value) -> Value {
+    let names = |key: &str| -> Option<Vec<String>> {
+        raw[key].as_array().map(|list| {
+            list.iter()
+                .filter_map(|v| v.as_str().map(str::to_owned))
+                .collect()
+        })
+    };
+    let (enabled, disabled) = (names("enabled_tools"), names("disabled_tools"));
+    let Some(tools) = result["tools"].as_array_mut() else {
+        return result;
+    };
+    tools.retain(|tool| {
+        let name = tool["name"].as_str().unwrap_or_default().to_owned();
+        enabled.as_ref().is_none_or(|list| list.contains(&name))
+            && !disabled.as_ref().is_some_and(|list| list.contains(&name))
+    });
+    let total: u64 = tools.iter().filter_map(|t| t["token_count"].as_u64()).sum();
+    result["tool_count"] = json!(tools.len());
+    result["tools_token_count"] = json!(total);
+    result
+}
+
+/// `launch` entries look like `{"name": .., "raw": {"command": .., "args": [..], "env": {..}},
+/// "base_env": {..}}` with unredacted values (see `process::mcp_launch_specs`); results are
+/// cached under the redacted `servers` list the report shows. Probed in parallel so total wall
+/// time tracks the slowest single server, not their sum -- staying well under the host's 20s
+/// hard timeout for the whole (persistent, cache-owning) engine process.
+pub fn probe(servers: &[Value], launch: &[Value]) -> Vec<Value> {
     let results = thread::scope(|scope| {
-        servers
+        launch
             .iter()
             .map(|entry| scope.spawn(|| probe_entry(entry)))
             .collect::<Vec<_>>()
@@ -271,14 +347,15 @@ mod tests {
     fn probes_a_real_local_stdio_mcp_server_when_available() {
         // `codegraph serve --mcp` is a real stdio MCP server when the CodeGraph CLI is
         // installed; a missing binary is a valid, explicit outcome, not a test failure.
-        let result = probe_one(
-            "codegraph",
-            "codegraph",
-            &["serve".into(), "--mcp".into()],
-            &BTreeMap::new(),
-            None,
-            DEFAULT_TIMEOUT,
-        );
+        let launch = Launch {
+            command: "codegraph",
+            args: &["serve".into(), "--mcp".into()],
+            base_env: &BTreeMap::new(),
+            env: &BTreeMap::new(),
+            cwd: None,
+            timeout: DEFAULT_TIMEOUT,
+        };
+        let result = probe_one("codegraph", &launch);
         if result["status"] == "error"
             && result["error"]
                 .as_str()
@@ -289,5 +366,19 @@ mod tests {
         assert_eq!(result["status"], "ok", "{result}");
         assert!(result["tool_count"].as_u64().unwrap() > 0);
         assert!(result["tools"][0]["token_count"].as_u64().unwrap() > 0);
+    }
+
+    #[test]
+    fn tool_filters_and_bad_timeouts_are_handled() {
+        let result = json!({"status":"ok","tools":[
+            {"name":"a","token_count":1},{"name":"b","token_count":2},{"name":"c","token_count":4}]});
+        let raw = json!({"enabled_tools":["a","b"],"disabled_tools":["b"]});
+        let filtered = filter_tools(result, &raw);
+        assert_eq!(filtered["tool_count"], 1);
+        assert_eq!(filtered["tools_token_count"], 1);
+        // A negative timeout must not panic; the missing command fails fast instead.
+        let entry =
+            json!({"name":"x","raw":{"command":"/nonexistent/server","startup_timeout_sec":-1}});
+        assert_eq!(probe_entry(&entry)["status"], "error");
     }
 }

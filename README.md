@@ -5,7 +5,10 @@
 
 macOS 原生 Codex 检查工具，采用 SwiftUI + Rust，无 Python 或浏览器运行时。
 
-0.4.0 新增上下文用量页面：系统提示词与上下文窗口大小读取自本机 `codex debug models --bundled`，
+0.5.0 起上下文用量页面支持 DeepSeek 等非 OpenAI 模型：系统提示词与有效上下文窗口直接读取会话日志中
+Codex 记录的原文与 `model_context_window`（旧日志回退到本机 `codex debug models --bundled`），
+当前占用取最近一次模型请求的用量；Token 按模型选择分词器——OpenAI 模型使用 `o200k_base`，
+DeepSeek（V3 至 V4.1）使用内置的官方词表，其他模型按 `o200k_base` 估算并标注。
 MCP 工具与 server 指令通过实际探测配置的 server 得到，其余部分（对话内容、Codex 内置工具定义）
 明确归入未逐项统计的余量，不做猜测性拆分。
 

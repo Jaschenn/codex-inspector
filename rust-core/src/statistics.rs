@@ -46,6 +46,14 @@ pub struct Metrics {
     reported_duration_ms: Option<i64>,
     first_token_ms: Option<i64>,
     last_event_ms: Option<i64>,
+    // Context occupancy is the latest single request (its prompt plus output), not the turn
+    // total: every tool round-trip re-sends the whole context, so turn sums overcount it.
+    #[serde(default)]
+    pub last_request_usage: Option<Usage>,
+    // Codex's own effective window for this turn (`model_context_window`), recorded for any
+    // provider, including models absent from Codex's bundled OpenAI catalog.
+    #[serde(default)]
+    pub context_window: Option<u64>,
 }
 impl Metrics {
     pub fn new(baseline: Option<Usage>) -> Self {
@@ -167,6 +175,9 @@ pub fn consume(state: &mut State, row: &Value) {
         if total.is_some() {
             state.last_thread_usage = total;
         }
+        if let Some(request) = usage(&payload["usage"]) {
+            metrics.last_request_usage = Some(request);
+        }
         if let Some(response) = payload["response_id"].as_str() {
             metrics.response_usage.insert(
                 response.into(),
@@ -194,6 +205,19 @@ pub fn consume(state: &mut State, row: &Value) {
         return;
     };
     let metrics = &mut state.turns[index].metrics;
+    if row_kind == "event_msg" {
+        if let Some(window) = payload["model_context_window"]
+            .as_u64()
+            .or_else(|| payload["info"]["model_context_window"].as_u64())
+        {
+            metrics.context_window = Some(window);
+        }
+        if kind == "token_count" {
+            if let Some(request) = usage(&payload["info"]["last_token_usage"]) {
+                metrics.last_request_usage = Some(request);
+            }
+        }
+    }
     if let Some(time) = time {
         metrics.last_event_ms = Some(time.max(metrics.last_event_ms.unwrap_or(time)));
     }
@@ -533,7 +557,11 @@ fn timeline(turn: &Turn) -> Value {
         "unsupported_item_types": unsupported_types})
 }
 pub fn summary(turn: &Turn) -> Value {
-    json!({"tokens":usage_summary(&turn.metrics),"timing":timeline(turn)})
+    json!({"tokens":usage_summary(&turn.metrics),"timing":timeline(turn),"context":context(turn)})
+}
+
+pub fn context(turn: &Turn) -> Value {
+    json!({"last_request_usage":turn.metrics.last_request_usage,"context_window":turn.metrics.context_window})
 }
 
 pub fn conversation_tokens(turns: &[Turn]) -> Value {
@@ -573,7 +601,7 @@ mod tests {
             "id": "turn", "number": 1, "started_at": "2026-10-21T00:00:00Z",
             "completed_at": "2026-10-21T00:00:10Z", "status": "completed",
             "cwd": null, "model": null, "user_preview": "", "assistant_preview": "",
-            "tool_count": 0, "instruction_ids": [], "instruction_sources": [],
+            "tool_count": 0, "instruction_ids": [],
             "metrics": Metrics::default(),
         }))
         .unwrap();

@@ -144,21 +144,12 @@ struct InspectorWindowView: View {
     .onAppear {
       reconcileSelection()
       reconcileSession()
+      // "View details" from the menu sets the request before this window exists.
+      applyRequestedDetailSession(fetcher.requestedDetailSessionID)
     }
     .onChange(of: processIDs) { _ in reconcileSelection() }
     .onChange(of: selectedPID) { _ in searchText = "" }
-    .onChange(of: fetcher.requestedDetailSessionID) { id in
-      if let id {
-        scope = .session
-        includeArchived = false
-        includeOtherSources = false
-        objectSearchText = ""
-        selectedSessionID = id
-        selectedTurnID = nil
-        updateSessionRequest()
-        fetcher.requestedDetailSessionID = nil
-      }
-    }
+    .onChange(of: fetcher.requestedDetailSessionID) { id in applyRequestedDetailSession(id) }
     .onChange(of: selectedSection) { _ in searchText = "" }
     .onChange(of: sessionIDs) { _ in reconcileSession() }
     .onChange(of: selectedSessionID) { _ in
@@ -709,8 +700,8 @@ struct InspectorWindowView: View {
             if let count = skill.int("token_count") {
               InspectionBadge(text: "≈ \(count.formatted()) tokens", color: .blue)
                 .help(
-                  skill.str("token_method") == "tiktoken"
-                    ? "tiktoken · \(skill.str("token_encoding") ?? "o200k_base") · SKILL.md 全文，含 frontmatter；不含引用文件与消息包装，非实际调用用量。"
+                  skill.str("token_method") == "tokenizer"
+                    ? "\(skill.str("token_encoding") ?? "o200k_base") 分词 · SKILL.md 全文，含 frontmatter；不含引用文件与消息包装，非实际调用用量。"
                     : "缺少本地分词表，当前按字符粗估；不代表实际模型调用用量。")
             } else {
               Text("Token 估算不可用").font(.caption).foregroundColor(.secondary)
@@ -872,6 +863,18 @@ struct InspectorWindowView: View {
       return "无法显示配置内容"
     }
     return text
+  }
+
+  private func applyRequestedDetailSession(_ id: String?) {
+    guard let id else { return }
+    scope = .session
+    includeArchived = false
+    includeOtherSources = false
+    objectSearchText = ""
+    selectedSessionID = id
+    selectedTurnID = nil
+    updateSessionRequest()
+    fetcher.requestedDetailSessionID = nil
   }
 
   private func reconcileSelection() {

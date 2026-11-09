@@ -183,20 +183,21 @@ fn report(options: &Options) -> Result<Value, String> {
 }
 
 fn context_budget_for(session: &Value, process: &Value, probe_mcp: bool) -> Value {
-    let detail = match sessions::inspect(session, None) {
+    let detail = match sessions::context(session) {
         Ok(detail) => detail,
         Err(error) => return json!({"available": false, "reason": error}),
     };
-    if detail["error"].is_string() {
-        return json!({"available": false, "reason": detail["error"]});
-    }
-    let model = detail["selected_turn"]["model"].as_str().map(str::to_owned);
-    let active_tokens =
-        detail["selected_turn"]["statistics"]["tokens"]["usage"]["total_tokens"].as_i64();
-    let recorded_instructions = detail["recorded_instructions"]
+    let instructions = detail["recorded_instructions"]
         .as_array()
         .cloned()
         .unwrap_or_default();
+    let recorded = context_budget::Recorded {
+        model: detail["model"].as_str(),
+        context_tokens: detail["context"]["last_request_usage"]["total_tokens"].as_i64(),
+        context_window: detail["context"]["context_window"].as_i64(),
+        system_prompt: detail["base_instructions"].as_str(),
+        instructions: &instructions,
+    };
     let binary_hint = process["cmdline"]
         .as_str()
         .and_then(shlex::split)
@@ -209,7 +210,11 @@ fn context_budget_for(session: &Value, process: &Value, probe_mcp: bool) -> Valu
     // A fresh probe is explicit (user action); otherwise reuse a recent one so the automatic
     // 1s poll does not silently re-spawn every configured MCP server.
     let (mcp_results, mcp_result_age_secs) = if probe_mcp {
-        (Some(mcp_probe::probe(&servers)), Some(0))
+        let launch = process["pid"]
+            .as_u64()
+            .and_then(|pid| process::mcp_launch_specs(pid as u32))
+            .unwrap_or_default();
+        (Some(mcp_probe::probe(&servers, &launch)), Some(0))
     } else {
         match mcp_probe::cached(&servers) {
             Some((results, age)) => (Some(results), Some(age.as_secs() as i64)),
@@ -217,9 +222,7 @@ fn context_budget_for(session: &Value, process: &Value, probe_mcp: bool) -> Valu
         }
     };
     context_budget::build(
-        model.as_deref(),
-        active_tokens,
-        &recorded_instructions,
+        &recorded,
         mcp_results.as_deref(),
         mcp_result_age_secs,
         binary_hint.as_deref(),

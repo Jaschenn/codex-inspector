@@ -83,7 +83,9 @@ final class InspectorEngine {
       guard let report = try JSONSerialization.jsonObject(with: response) as? [String: Any] else {
         throw FetchError("检查引擎返回了无效的 JSON 对象")
       }
-      if let error = report.str("error") { throw FetchError(error) }
+      // A report-level error (e.g. a failed process scan) comes from a healthy engine:
+      // keep it and its caches instead of restarting it on every refresh.
+      if let error = report.str("error") { return .failure(FetchError(error)) }
       return .success(report)
     } catch {
       stop()

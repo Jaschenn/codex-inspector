@@ -4,8 +4,12 @@ import SwiftUI
 struct MenuContentView: View {
   @Environment(\.openWindow) private var openWindow
   @ObservedObject var fetcher: ReportFetcher
-  @State private var selectedPID: Int?
-  @State private var selectedSessionID: String?
+  private var selectedPID: Binding<Int?> {
+    Binding(get: { fetcher.menuPID }, set: { fetcher.selectMenuProcess($0) })
+  }
+  private var selectedSessionID: Binding<String?> {
+    Binding(get: { fetcher.menuSessionID }, set: { fetcher.selectMenuSession($0) })
+  }
 
   private var processes: [[String: Any]] { fetcher.report.dictArray("processes") }
   private var session: [String: Any] { fetcher.report.subDict("menu_session") }
@@ -96,16 +100,11 @@ struct MenuContentView: View {
       .padding(.horizontal, 16).padding(.vertical, 12)
     }
     .frame(width: 420)
-    .onChange(of: selectedPID) { pid in
-      selectedSessionID = nil
-      fetcher.selectMenuProcess(pid)
-    }
-    .onChange(of: selectedSessionID) { fetcher.selectMenuSession($0) }
     .onChange(of: processes.compactMap { $0.int("pid") }) { pids in
-      if let selectedPID, !pids.contains(selectedPID) { self.selectedPID = nil }
+      if let pid = fetcher.menuPID, !pids.contains(pid) { fetcher.selectMenuProcess(nil) }
     }
     .onChange(of: candidates.compactMap { $0.str("id") }) { ids in
-      if let selectedSessionID, !ids.contains(selectedSessionID) { self.selectedSessionID = nil }
+      if let id = fetcher.menuSessionID, !ids.contains(id) { fetcher.selectMenuSession(nil) }
     }
   }
 
@@ -113,7 +112,7 @@ struct MenuContentView: View {
     VStack(alignment: .leading, spacing: 8) {
       HStack {
         Text("进程").font(.system(size: 12)).foregroundColor(.secondary)
-        Picker("进程", selection: $selectedPID) {
+        Picker("进程", selection: selectedPID) {
           Text("自动 · PID \(String(fetcher.report.int("menu_pid") ?? 0))").tag(Int?.none)
           ForEach(processes.compactMap { $0.int("pid") }, id: \.self) { pid in
             Text("PID \(String(pid))").tag(Optional(pid))
@@ -125,7 +124,7 @@ struct MenuContentView: View {
         title: "当前对话",
         choices: [PickerChoice(id: nil, title: "自动跟随最近活动")]
           + candidates.map { PickerChoice(id: $0.str("id"), title: $0.str("title") ?? "未命名聊天") },
-        selection: $selectedSessionID)
+        selection: selectedSessionID)
       Text(session.str("title") ?? "等待关联聊天")
         .font(.system(size: 14, weight: .semibold)).lineLimit(2)
       Text(shortenPath(session.str("cwd")))

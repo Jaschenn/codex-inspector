@@ -19,7 +19,9 @@ use std::{
 };
 use walkdir::WalkDir;
 const LIMIT: usize = 300;
-const CACHE_VERSION: u32 = 5; // Rebuild indexes to include per-turn tool and file activity.
+// The turn picker shows a short label; full previews of every turn would be re-sent each second.
+const TURN_LIST_PREVIEW: usize = 80;
+const CACHE_VERSION: u32 = 6; // Rebuild indexes to include recorded system prompts and context usage.
 const PREVIEW: usize = 1800;
 const ORIGINATORS: [&str; 5] = [
     "Codex Desktop",
@@ -333,7 +335,6 @@ pub struct Turn {
     #[serde(default)]
     activity: Activity,
     instruction_ids: Vec<String>,
-    instruction_sources: Vec<String>,
     pub metrics: Metrics,
 }
 fn turn(state: &mut State, payload: &Value, time: Option<&str>) -> usize {
@@ -368,7 +369,6 @@ fn turn(state: &mut State, payload: &Value, time: Option<&str>) -> usize {
         tool_count: 0,
         activity: Activity::default(),
         instruction_ids: state.active_instructions.clone(),
-        instruction_sources: Vec::new(),
         metrics: Metrics::new(baseline),
     });
     state.turns.len() - 1
@@ -417,6 +417,8 @@ fn consume(state: &mut State, row: &Value) {
             ] {
                 state.metadata[key] = payload[key].clone();
             }
+            // The exact system prompt Codex sent, whichever provider or model is in use.
+            state.metadata["base_instructions"] = payload["base_instructions"]["text"].clone();
             return;
         }
         "turn_context" => {
@@ -427,17 +429,6 @@ fn consume(state: &mut State, row: &Value) {
             }
             if let Some(model) = payload["model"].as_str().filter(|s| !s.is_empty()) {
                 turn.model = Some(model.into());
-            }
-            if let Some(sources) = payload
-                .get("instruction_sources")
-                .or_else(|| payload.get("instructionSources"))
-                .and_then(Value::as_array)
-            {
-                turn.instruction_sources = sources
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .map(str::to_owned)
-                    .collect();
             }
             return;
         }
@@ -724,6 +715,25 @@ fn index_with_cache(path: &Path, memory: Option<State>, cache: &Path) -> Result<
     }
     Ok(state)
 }
+/// Inputs for the context-budget view of a conversation's latest turn, without the full
+/// configuration inspection `inspect` performs (the budget is refreshed every second).
+pub fn context(summary: &Value) -> Result<Value, String> {
+    let home = util::expand(util::text(&summary["codex_home"]));
+    let raw = summary["rollout_path"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .ok_or("这条聊天记录没有可读取的本地日志路径。")?;
+    let state = index(&rollout_path(&home, raw)).map_err(|e| format!("聊天日志无法读取：{e}"))?;
+    let turn = state.turns.last().ok_or("聊天尚未记录可检查的轮次。")?;
+    Ok(json!({
+        "model": turn.model,
+        "context": statistics::context(turn),
+        "base_instructions": state.metadata["base_instructions"],
+        "recorded_instructions": turn.instruction_ids.iter()
+            .filter_map(|id| state.instructions.get(id)).collect::<Vec<_>>(),
+    }))
+}
+
 pub fn inspect(summary: &Value, turn_id: Option<&str>) -> Result<Value, String> {
     inspect_detail(summary, turn_id, true)
 }
@@ -755,7 +765,7 @@ fn inspect_detail(summary: &Value, turn_id: Option<&str>, detailed: bool) -> Res
         }
     };
     if detailed {
-        result["turns"] = json!(state.turns.iter().map(|t| json!({"id":t.id,"number":t.number,"started_at":t.started_at,"completed_at":t.completed_at,"status":t.status,"cwd":t.cwd,"model":t.model,"user_preview":t.user_preview,"tool_count":t.tool_count})).collect::<Vec<_>>());
+        result["turns"] = json!(state.turns.iter().map(|t| json!({"id":t.id,"number":t.number,"started_at":t.started_at,"completed_at":t.completed_at,"status":t.status,"cwd":t.cwd,"model":t.model,"user_preview":util::truncate(&t.user_preview, TURN_LIST_PREVIEW),"tool_count":t.tool_count})).collect::<Vec<_>>());
     }
     let selected = if let Some(id) = turn_id {
         state.turns.iter().find(|t| t.id == id)
@@ -776,18 +786,13 @@ fn inspect_detail(summary: &Value, turn_id: Option<&str>, detailed: bool) -> Res
         "started_at":selected.started_at,"completed_at":selected.completed_at,"status":selected.status,
         "cwd":selected.cwd,"model":selected.model,"tool_count":selected.tool_count,
         "user_preview":selected.user_preview,"assistant_preview":selected.assistant_preview,
-        "instruction_ids":selected.instruction_ids,"instruction_sources":selected.instruction_sources});
+        "instruction_ids":selected.instruction_ids});
     selected_value["statistics"] = statistics::summary(selected);
     if detailed {
         selected_value["activity"] = selected.activity.summary();
     }
     if !detailed {
-        for key in [
-            "user_preview",
-            "assistant_preview",
-            "instruction_ids",
-            "instruction_sources",
-        ] {
+        for key in ["user_preview", "assistant_preview", "instruction_ids"] {
             selected_value.as_object_mut().unwrap().remove(key);
         }
         result["conversation_tokens"] = statistics::conversation_tokens(&state.turns);
@@ -1234,5 +1239,40 @@ mod tests {
         assert!(tokens["usage"].is_null());
         assert_eq!(tokens["source"], "unavailable");
         assert_eq!(tokens["counter_reset"], true);
+    }
+
+    #[test]
+    fn context_occupancy_is_the_last_request_not_the_turn_sum() {
+        let mut state = State::default();
+        apply(
+            &mut state,
+            "session_meta",
+            json!({"id":"chat","base_instructions":{"text":"system prompt"}}),
+        );
+        apply(
+            &mut state,
+            "event_msg",
+            json!({"type":"task_started","turn_id":"turn","model_context_window":950_000}),
+        );
+        // Three tool round-trips: each request re-sends the growing context.
+        for (last, total) in [(40_000, 40_000), (42_000, 82_000), (45_000, 127_000)] {
+            apply(
+                &mut state,
+                "event_msg",
+                json!({"type":"token_count","info":{
+                    "total_token_usage":{"total_tokens":total},
+                    "last_token_usage":{"total_tokens":last},
+                    "model_context_window":950_000}}),
+            );
+        }
+        let turn = &state.turns[0];
+        assert_eq!(
+            statistics::summary(turn)["tokens"]["usage"]["total_tokens"],
+            127_000
+        );
+        let context = statistics::context(turn);
+        assert_eq!(context["last_request_usage"]["total_tokens"], 45_000);
+        assert_eq!(context["context_window"], 950_000);
+        assert_eq!(state.metadata["base_instructions"], "system prompt");
     }
 }

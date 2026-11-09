@@ -110,8 +110,14 @@ final class ReportFetcher: ObservableObject {
     refresh()
   }
 
+  /// The menu's manual selection lives here, not in each view, so the menu bar popover and the
+  /// activity window (two `MenuContentView`s sharing this fetcher) always show the same choice.
+  var menuPID: Int? { inspectionRequest.menuPID }
+  var menuSessionID: String? { inspectionRequest.menuSessionID }
+
   func selectMenuProcess(_ pid: Int?) {
     guard pid != inspectionRequest.menuPID else { return }
+    objectWillChange.send()
     inspectionRequest.menuPID = pid
     inspectionRequest.menuSessionID = nil
     refresh()
@@ -119,6 +125,7 @@ final class ReportFetcher: ObservableObject {
 
   func selectMenuSession(_ id: String?) {
     guard id != inspectionRequest.menuSessionID else { return }
+    objectWillChange.send()
     inspectionRequest.menuSessionID = id
     refresh()
   }

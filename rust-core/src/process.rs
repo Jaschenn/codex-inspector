@@ -2,7 +2,10 @@ use crate::{config, util};
 use regex::Regex;
 use serde::Serialize;
 use serde_json::{Value, json};
-use std::{collections::BTreeMap, path::Path};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 pub struct RawProcess {
     pub pid: u32,
@@ -257,7 +260,17 @@ fn env(pid: u32) -> (BTreeMap<String, String>, &'static str) {
     };
     (result, status)
 }
-pub fn inspect(process: &RawProcess) -> Result<Value, String> {
+struct Resolved {
+    cwd: Option<String>,
+    error: Option<String>,
+    env: BTreeMap<String, String>,
+    status: &'static str,
+    overrides: Overrides,
+    home: PathBuf,
+    effective: PathBuf,
+}
+
+fn resolve(process: &RawProcess) -> Result<Resolved, String> {
     let (cwd, error) = if let Some(cwd) = native_cwd(process.pid) {
         (Some(cwd), None)
     } else {
@@ -278,18 +291,71 @@ pub fn inspect(process: &RawProcess) -> Result<Value, String> {
     };
     let (env, status) = env(process.pid);
     let overrides = overrides(&process.cmdline);
-    let home = overrides
-        .codex_home
-        .as_ref()
-        .or_else(|| env.get("CODEX_HOME"))
-        .map(|s| util::expand(s))
-        .unwrap_or_else(|| util::home().join(".codex"));
-    let effective = overrides
-        .cd
-        .as_ref()
-        .or(cwd.as_ref())
-        .map(|s| util::expand(s))
-        .unwrap_or(std::env::current_dir().map_err(|e| e.to_string())?);
+    // Relative `--cd` / CODEX_HOME are relative to the Codex process, not to this engine.
+    let relative_to_process = |raw: &str| {
+        let path = util::expand(raw);
+        match &cwd {
+            Some(base) if path.is_relative() => Path::new(base).join(path),
+            _ => path,
+        }
+    };
+    // Canonical, so it compares equal to the (canonicalized) session catalog's `codex_home`.
+    let home = util::canonical(
+        &overrides
+            .codex_home
+            .as_ref()
+            .or_else(|| env.get("CODEX_HOME"))
+            .map(|s| relative_to_process(s))
+            .unwrap_or_else(|| util::home().join(".codex")),
+    );
+    let effective = match overrides.cd.as_ref().or(cwd.as_ref()) {
+        Some(path) => relative_to_process(path),
+        None => std::env::current_dir().map_err(|e| e.to_string())?,
+    };
+    Ok(Resolved {
+        cwd,
+        error,
+        env,
+        status,
+        overrides,
+        home,
+        effective,
+    })
+}
+
+/// Unredacted launch specs for a running Codex process's enabled MCP servers, with that
+/// process's own environment as the base. Only used to spawn probes; never serialized.
+pub fn mcp_launch_specs(pid: u32) -> Option<Vec<Value>> {
+    let process = scan().ok()?.into_iter().find(|p| p.pid == pid)?;
+    let resolved = resolve(&process).ok()?;
+    let merged = config::build(
+        &resolved.home,
+        &resolved.effective,
+        resolved.overrides.profile.as_deref(),
+        &resolved.overrides.c_overrides,
+    )
+    .merged;
+    Some(
+        merged["mcp_servers"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter(|(_, raw)| raw.is_object() && raw["enabled"] != false)
+            .map(|(name, raw)| json!({"name": name, "raw": raw, "base_env": resolved.env}))
+            .collect(),
+    )
+}
+
+pub fn inspect(process: &RawProcess) -> Result<Value, String> {
+    let Resolved {
+        cwd,
+        error,
+        env: _,
+        status,
+        overrides,
+        home,
+        effective,
+    } = resolve(process)?;
     let mut report = config::report(
         &home,
         &effective,

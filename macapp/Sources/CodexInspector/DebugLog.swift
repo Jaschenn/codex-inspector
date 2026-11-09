@@ -1,22 +1,34 @@
 import Foundation
 
-/// 临时诊断用:把每次探测子进程的结果追加写到一个日志文件里,方便在双击运行的场景下
-/// (没法直接看 App 的 stdout)排查"为什么有时候解析失败"这类间歇性问题。
+/// Engine diagnostics for the double-clicked app, which has no visible stdout. Writes are
+/// serialized (stderr handler and engine queue both log) and the file is capped in size.
 enum DebugLog {
   private static let path = NSHomeDirectory() + "/Library/Logs/CodexInspectorDebug.log"
+  private static let limit: UInt64 = 1024 * 1024
+  private static let queue = DispatchQueue(label: "CodexInspector.DebugLog")
 
   static func write(_ message: String) {
     let line = "[\(Date())] \(message)\n"
     guard let data = line.data(using: .utf8) else { return }
-    if let handle = FileHandle(forWritingAtPath: path) {
-      // Diagnostic failure must not crash the inspector during engine recovery.
-      defer { try? handle.close() }
-      do {
-        try handle.seekToEnd()
-        try handle.write(contentsOf: data)
-      } catch { return }
-    } else {
-      try? data.write(to: URL(fileURLWithPath: path))
+    queue.async {
+      if let size = (try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? UInt64,
+        size > limit
+      {
+        // Keep one previous generation; diagnostics are only for recent failures.
+        let previous = path + ".1"
+        try? FileManager.default.removeItem(atPath: previous)
+        try? FileManager.default.moveItem(atPath: path, toPath: previous)
+      }
+      if let handle = FileHandle(forWritingAtPath: path) {
+        // Diagnostic failure must not crash the inspector during engine recovery.
+        defer { try? handle.close() }
+        do {
+          try handle.seekToEnd()
+          try handle.write(contentsOf: data)
+        } catch { return }
+      } else {
+        try? data.write(to: URL(fileURLWithPath: path))
+      }
     }
   }
 }

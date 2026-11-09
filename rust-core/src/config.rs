@@ -704,7 +704,7 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0]["token_count"], expected);
         assert_eq!(result[0]["token_encoding"], "o200k_base");
-        assert_eq!(result[0]["token_method"], "tiktoken");
+        assert_eq!(result[0]["token_method"], "tokenizer");
     }
 
     #[test]
