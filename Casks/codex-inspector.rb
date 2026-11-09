@@ -1,9 +1,9 @@
 cask "codex-inspector" do
   arch arm: "arm64", intel: "x86_64"
 
-  version "0.5.0"
-  sha256 arm:   "97ab6a07c801d25ca6b104aa26b20dc9d43b6a1886ecbcb47bfcd242f5cb79f6",
-         intel: "e10a1e9faffbef817000982f21404739c21eecad28e542ce6613a3e1f2dc7d24"
+  version "0.5.1"
+  sha256 arm:   "5a0645e517a33858697097a28c640405d3a28993f235b4b8d735e14230a49ffb",
+         intel: "3e57c0ad8b6d994a423bc55245dc3ff7865850b0b6eb6c7b99ca6168f85678f2"
 
   url "https://github.com/Jaschenn/codex-inspector/releases/download/v#{version}/CodexInspector-macos-#{arch}.zip"
   name "Codex Inspector"
